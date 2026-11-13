@@ -1,0 +1,10 @@
+#!/bin/sh
+# Source checkout entry point; the installer writes an absolute-path launcher.
+set -eu
+python_bin=${PYTHON:-python3}
+if ! command -v "$python_bin" >/dev/null 2>&1; then
+    printf '%s\n' '今日运势需要 Python 3.9+：https://www.python.org/downloads/macos/' >&2
+    exit 1
+fi
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$python_bin" -I -B "$script_dir/main.py" "$@"

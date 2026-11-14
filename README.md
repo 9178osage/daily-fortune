@@ -2,6 +2,8 @@
 
 在 Windows 或 macOS 终端每天抽一张中文短签，看看财运、桃花运、事业运，以及当天的符卡和点评。还可以展开详卦、领取一个小任务，或让程序替你在两个日常选项中挑一个。运行时完全离线，只用 Python 标准库。
 
+**1.6.0 新增 Windows 命令行支持。** [Windows 安装](#windowspowershell) · [macOS 安装](#macos) · [下载 main 分支源码 ZIP](https://github.com/9178osage/daily-fortune/archive/refs/heads/main.zip)
+
 ```text
 穷观阵已启，本座观得艮象 (｡･ω･｡)（仅供娱乐）
 财运：43
@@ -16,7 +18,7 @@
 
 ## 快速开始
 
-需要 Python 3.9 或更高版本。先克隆仓库，或下载 ZIP 后解压并在终端打开解压目录。[下载源码 ZIP](https://github.com/9178osage/daily-fortune/archive/refs/heads/main.zip)
+需要 Python 3.9 或更高版本。下载源码 ZIP 后解压，或用 Git 克隆，然后在源码目录里执行对应平台的命令。
 
 ```sh
 git clone https://github.com/9178osage/daily-fortune.git
@@ -25,26 +27,24 @@ cd daily-fortune
 
 ### Windows（PowerShell）
 
-安装 [Windows 版 Python](https://www.python.org/downloads/windows/) 后，用 `py -3 --version` 或 `python --version` 确认版本。在源码目录直接运行即可预览短签。
-
-```powershell
-py -3 .\main.py --date 2026-11-08
-```
-
-如果系统提供的是 `python` 命令，将示例中的 `py -3` 换成 `python`。
-
-运行安装脚本后，可以从任意目录启动。安装只写入当前用户的目录，无需管理员权限。
+安装 Python 后，用 `py -3 --version` 或 `python --version` 确认版本。在解压或克隆得到的目录中打开 PowerShell。安装只写入当前用户的目录，无需管理员权限。 [下载 Windows 版 Python](https://www.python.org/downloads/windows/)
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
-& "$env:LOCALAPPDATA\daily-fortune\bin\daily-fortune.cmd"
+& "$env:LOCALAPPDATA\daily-fortune\bin\daily-fortune.cmd" --version
 ```
 
-`-ExecutionPolicy Bypass` 仅对运行安装脚本的这个 PowerShell 进程有效。若想在当前窗口直接输入 `daily-fortune`，将启动器目录加入当前会话的 PATH。
+`-ExecutionPolicy Bypass` 仅对运行安装脚本的这个 PowerShell 进程有效。安装后，在任何目录都可以用上面的完整路径启动，去掉 `--version` 即可抽签。若想在当前窗口直接输入 `daily-fortune`，先把启动器目录加入当前会话的 PATH。
 
 ```powershell
-$env:Path += ";$env:LOCALAPPDATA\daily-fortune\bin"
-daily-fortune --full
+$env:Path = "$env:LOCALAPPDATA\daily-fortune\bin;$env:Path"
+daily-fortune
+```
+
+也可以直接从源码预览指定日期的短签。如果系统提供的是 `python` 命令，将 `py -3` 换成 `python`。
+
+```powershell
+py -3 .\main.py --date 2026-11-08
 ```
 
 Windows PowerShell 5.1 通过管道读取输出时，若中文显示异常，可先在当前窗口运行 `[Console]::OutputEncoding = [Text.Encoding]::UTF8`。
@@ -88,19 +88,31 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ### Windows
 
-在源码目录执行对应操作。
+在新版源码目录中执行更新。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\update.ps1
+```
+
+需要移除已安装的命令时，执行卸载。
+
+```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
-默认状态目录是 `%LOCALAPPDATA%\daily-fortune\state`。升级前的程序副本会保存在安装目录的 `backups` 下。如果安装时用了 `-Prefix`，更新和卸载时传入同一路径。
+默认状态目录是 `%LOCALAPPDATA%\daily-fortune\state`。升级前的程序副本会保存在安装目录的 `backups` 下。如果安装时用了 `-Prefix`，启动器位于该目录的 `bin\daily-fortune.cmd`，更新和卸载时也要传入同一个 `-Prefix`。
 
 ### macOS
 
+在新版源码目录中执行更新。
+
 ```sh
 ./update.sh
+```
+
+需要移除已安装的命令时，执行卸载。
+
+```sh
 ./uninstall.sh
 ```
 
@@ -113,7 +125,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 - 可用 `PYTHON=/绝对路径/python3 ./install.sh` 选择解释器。启动器使用安装时的 Python 绝对路径。若该 Python 已移除，可通过同样的 `PYTHON=…` 写法指定解释器来卸载，再重新安装。
 - 安装时若遇到已存在的同名命令或安装文件，安装器会停止并提示冲突。卸载会核对清单和文件校验值，遇到改动或未知文件时会停止。
 - 更新会校验已安装文件并验证新版本，再切换程序副本。旧程序和清单保存在更新完成时打印的备份目录。
-- 直接从源码运行时，可设置绝对路径 `DAILY_FORTUNE_HOME` 来隔离状态。已安装的启动器使用对应安装目录下的状态。
 
 </details>
 
@@ -157,6 +168,8 @@ JSON 规定使用紧凑分隔符和原始 Unicode；摘要按大端整数读取�
 
 ## 开发与测试
 
+1.6.0 已在 GitHub Actions 上通过 Windows（Python 3.9、3.13）和 macOS（Python 3.13）测试。Windows 用例涵盖中文路径、并发抽签、安装、升级、卸载重装及记录保留。 [查看 1.6.0 测试结果](https://github.com/9178osage/daily-fortune/actions/runs/43582674509)
+
 在 macOS 上运行全套测试。
 
 ```sh
@@ -170,4 +183,5 @@ py -3 -B -m unittest -v tests.test_engine tests.test_cli tests.test_windows
 ```
 
 - [设计调研与来源](docs/RESEARCH.md)
-- [测试记录与环境](docs/TESTING.md)
+- [历史测试记录与环境](docs/TESTING.md)
+- [Windows 与 macOS 自动化测试](https://github.com/9178osage/daily-fortune/actions/workflows/tests.yml)

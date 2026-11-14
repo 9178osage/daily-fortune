@@ -1,6 +1,6 @@
 # 今日运势 · Daily Fortune CLI
 
-在 macOS 终端输入 `今日运势`，每天抽一张中文短签，看看财运、桃花运、事业运，以及当天的符卡和点评。还可以展开详卦、领取一个小任务，或让程序替你在两个日常选项中挑一个。运行时完全离线，只用 Python 标准库。
+在 Windows 或 macOS 终端每天抽一张中文短签，看看财运、桃花运、事业运，以及当天的符卡和点评。还可以展开详卦、领取一个小任务，或让程序替你在两个日常选项中挑一个。运行时完全离线，只用 Python 标准库。
 
 ```text
 穷观阵已启，本座观得艮象 (｡･ω･｡)（仅供娱乐）
@@ -16,11 +16,44 @@
 
 ## 快速开始
 
-需要 macOS 和 [Python 3.9 或更高版本](https://www.python.org/downloads/macos/)。克隆仓库后，可以直接预览指定日期的短签。
+需要 Python 3.9 或更高版本。先克隆仓库，或下载 ZIP 后解压并在终端打开解压目录。[下载源码 ZIP](https://github.com/9178osage/daily-fortune/archive/refs/heads/main.zip)
 
 ```sh
 git clone https://github.com/9178osage/daily-fortune.git
 cd daily-fortune
+```
+
+### Windows（PowerShell）
+
+安装 [Windows 版 Python](https://www.python.org/downloads/windows/) 后，用 `py -3 --version` 或 `python --version` 确认版本。在源码目录直接运行即可预览短签。
+
+```powershell
+py -3 .\main.py --date 2026-11-08
+```
+
+如果系统提供的是 `python` 命令，将示例中的 `py -3` 换成 `python`。
+
+运行安装脚本后，可以从任意目录启动。安装只写入当前用户的目录，无需管理员权限。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+& "$env:LOCALAPPDATA\daily-fortune\bin\daily-fortune.cmd"
+```
+
+`-ExecutionPolicy Bypass` 仅对运行安装脚本的这个 PowerShell 进程有效。若想在当前窗口直接输入 `daily-fortune`，将启动器目录加入当前会话的 PATH。
+
+```powershell
+$env:Path += ";$env:LOCALAPPDATA\daily-fortune\bin"
+daily-fortune --full
+```
+
+Windows PowerShell 5.1 通过管道读取输出时，若中文显示异常，可先在当前窗口运行 `[Console]::OutputEncoding = [Text.Encoding]::UTF8`。
+
+### macOS
+
+安装 [macOS 版 Python](https://www.python.org/downloads/macos/) 后，在源码目录预览短签。
+
+```sh
 ./今日运势 --date 2026-11-08
 ```
 
@@ -38,30 +71,43 @@ export PATH="$HOME/.local/bin:$PATH"
 
 直接运行时，按系统本地日期每天可抽一张短签。当天再运行会看到一句提醒。交互终端里可按 `1` 看详卦、`2` 领今日小任务、`3` 玩二选一，或按回车退出。
 
-| 命令 | 用途 |
+| 参数 | 用途 |
 | --- | --- |
-| `今日运势 --full` | 查看七项星级、幸运元素、赛博黄历和寄语 |
-| `今日运势 --date 2026-11-08` | 预览指定日期的短签 |
-| `今日运势 --full --date 2026-11-08` | 查看指定日期的详卦 |
-| `今日运势 --plain` | 用数字表示星级，关闭颜色、Emoji 和菜单 |
-| `今日运势 --help` | 查看参数说明 |
-| `今日运势 --version` | 查看版本 |
+| `--full` | 查看七项星级、幸运元素、赛博黄历和寄语 |
+| `--date 2026-11-08` | 预览指定日期的短签 |
+| `--full --date 2026-11-08` | 查看指定日期的详卦 |
+| `--plain` | 用数字表示星级，关闭颜色、Emoji 和菜单 |
+| `--help` | 查看参数说明 |
+| `--version` | 查看版本 |
 
 `--date` 和 `--full` 可随时使用，且不占当天的抽签次数。单独使用 `--plain` 会计入当天次数。
 
 ## 更新与卸载
 
-在克隆下来的目录中拉取更新，再更新已安装的副本。
+在克隆下来的目录中执行 `git pull --ff-only` 获取新版。如果用的是 ZIP，则改在新版解压目录中执行更新。更新和卸载都会保留匿名标识和抽签记录。
 
-```sh
-git pull --ff-only
-./update.sh
+### Windows
+
+在源码目录执行对应操作。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\update.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
-在源码目录运行 `./uninstall.sh` 可以卸载。更新和卸载都会保留匿名标识和抽签记录。默认状态目录是 `~/.local/share/daily-fortune/state/`。
+默认状态目录是 `%LOCALAPPDATA%\daily-fortune\state`。升级前的程序副本会保存在安装目录的 `backups` 下。如果安装时用了 `-Prefix`，更新和卸载时传入同一路径。
+
+### macOS
+
+```sh
+./update.sh
+./uninstall.sh
+```
+
+默认状态目录是 `~/.local/share/daily-fortune/state/`。
 
 <details>
-<summary>自定义安装与维护</summary>
+<summary>macOS 自定义安装与维护</summary>
 
 - 安装、更新和卸载均接受 `--prefix`。使用自定义目录时，三次操作需指向同一个目录。
 - 可用 `PYTHON=/绝对路径/python3 ./install.sh` 选择解释器。启动器使用安装时的 Python 绝对路径。若该 Python 已移除，可通过同样的 `PYTHON=…` 写法指定解释器来卸载，再重新安装。
@@ -111,8 +157,16 @@ JSON 规定使用紧凑分隔符和原始 Unicode；摘要按大端整数读取�
 
 ## 开发与测试
 
+在 macOS 上运行全套测试。
+
 ```sh
 python3 -B -m unittest discover -s tests -v
+```
+
+Windows 上运行运势、命令行和安装流程的测试。
+
+```powershell
+py -3 -B -m unittest -v tests.test_engine tests.test_cli tests.test_windows
 ```
 
 - [设计调研与来源](docs/RESEARCH.md)

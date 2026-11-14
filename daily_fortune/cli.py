@@ -3,9 +3,11 @@
 import argparse
 from contextlib import nullcontext
 from datetime import date
+import errno
 import os
 import re
 import shutil
+import stat
 import sys
 
 from . import __version__
@@ -15,6 +17,9 @@ from .engine import generate
 from .followup import show_followups
 from .identity import IdentityError, load_identity, state_directory
 from .render import render, render_compact, wrap
+
+if os.name == "nt":
+    from ._windows import virtual_terminal
 
 
 class Parser(argparse.ArgumentParser):
@@ -30,6 +35,18 @@ def parse_date(value):
         return date.fromisoformat(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError("日期应为有效的 YYYY-MM-DD，例如 2026-11-08。") from exc
+
+
+def _output_pipe_closed(error):
+    if isinstance(error, BrokenPipeError):
+        return True
+    if os.name == "nt" and isinstance(error, OSError) and error.errno == errno.EINVAL:
+        # Older Windows Python can expose a closed pipe as EINVAL.
+        try:
+            return stat.S_ISFIFO(os.fstat(sys.stdout.fileno()).st_mode)
+        except OSError:
+            pass
+    return False
 
 
 def main(argv=None):
@@ -52,34 +69,36 @@ def main(argv=None):
         identity = load_identity(directory)
         tty = sys.stdout.isatty()
         emoji = tty and os.environ.get("TERM") != "dumb"
-        color = emoji and not os.environ.get("NO_COLOR")
+        color = emoji and not args.plain and not os.environ.get("NO_COLOR")
+        colors = virtual_terminal(sys.stdout) if color and os.name == "nt" else nullcontext(color)
         # Python 3.9 can return zero columns for an unconfigured PTY.
         width = shutil.get_terminal_size(fallback=(76, 24)).columns or 76
         draw = nullcontext(True) if args.date or args.full else daily_draw(directory, day)
-        with draw as first_draw:
-            if not first_draw:
-                output = "\n".join(wrap(already_drawn(day, identity), min(78, width))) + "\n"
-            elif args.full:
-                output = render(generate(day, identity), width, color=color, plain=args.plain, emoji=emoji)
-            else:
-                output = render_compact(summarize(day, identity), width, color=color, plain=args.plain)
-            sys.stdout.write(output)
-            sys.stdout.flush()
-        if tty and sys.stdin.isatty() and not (args.date or args.full or args.plain):
-            if hasattr(sys.stdin, "reconfigure"):
-                sys.stdin.reconfigure(encoding="utf-8", errors="surrogateescape")
-            show_followups(day, identity, width, color=color, emoji=emoji)
+        with colors as color:
+            with draw as first_draw:
+                if not first_draw:
+                    output = "\n".join(wrap(already_drawn(day, identity), min(78, width))) + "\n"
+                elif args.full:
+                    output = render(generate(day, identity), width, color=color, plain=args.plain, emoji=emoji)
+                else:
+                    output = render_compact(summarize(day, identity), width, color=color, plain=args.plain)
+                sys.stdout.write(output)
+                sys.stdout.flush()
+            if tty and sys.stdin.isatty() and not (args.date or args.full or args.plain):
+                if hasattr(sys.stdin, "reconfigure"):
+                    sys.stdin.reconfigure(encoding="utf-8", errors="surrogateescape")
+                show_followups(day, identity, width, color=color, emoji=emoji)
         return 0
     except (IdentityError, DrawMemoryError) as exc:
         print("今日运势：%s" % exc, file=sys.stderr)
         return 1
-    except BrokenPipeError:
-        # Prevent the interpreter's final stdout flush from emitting a traceback.
-        try:
-            sys.stdout = open(os.devnull, "w", encoding="utf-8")
-        except OSError:
-            pass
-        return 0
     except (OSError, UnicodeError) as exc:
+        if _output_pipe_closed(exc):
+            # Prevent the interpreter's final stdout flush from emitting a traceback.
+            try:
+                sys.stdout = open(os.devnull, "w", encoding="utf-8")
+            except OSError:
+                pass
+            return 0
         print("今日运势：无法输出报告：%s" % exc, file=sys.stderr)
         return 1

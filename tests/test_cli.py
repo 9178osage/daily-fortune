@@ -3,19 +3,22 @@ from datetime import date
 import errno
 import os
 from pathlib import Path
-import pty
-import select
 import socket
 import subprocess
 import sys
 import tempfile
-import termios
-import time
 import unittest
 from unittest.mock import patch
 
+if os.name != "nt":
+    import pty
+    import select
+    import termios
+    import time
+
+from daily_fortune.draw_memory import DrawMemoryError, daily_draw
 from daily_fortune.engine import generate
-from daily_fortune.identity import IdentityError, load_identity
+from daily_fortune.identity import IdentityError, load_identity, state_directory
 from daily_fortune.render import ANSI, clusters, display_width, render, wrap
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,7 +58,8 @@ class CliTests(unittest.TestCase):
 
     def test_local_date_and_utc_boundary(self):
         # TZ is read by each new process; compare to its own local date.
-        for zone in ("Pacific/Kiritimati", "America/Los_Angeles", "Etc/GMT+12"):
+        zones = ("Pacific/Kiritimati", "America/Los_Angeles", "Etc/GMT+12") if os.name != "nt" else ("",)
+        for zone in zones:
             local = subprocess.check_output([sys.executable, "-c", "from datetime import date; print(date.today())"],
                                              env=dict(self.env, TZ=zone), text=True).strip()
             state = str(self.state / zone.replace("/", "-"))
@@ -83,9 +87,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(process.stderr, b"")
         self.assertIn("符卡：", self.run_cli().stdout)
 
-    def test_daily_draw_memory_and_date_rollover(self):
+    def test_daily_draw_memory(self):
         first_zone = "Pacific/Kiritimati"
-        second_zone = "Etc/GMT+12"
         today = subprocess.check_output([sys.executable, "-c", "from datetime import date; print(date.today())"],
                                         env=dict(self.env, TZ=first_zone), text=True).strip()
         preview = self.run_cli("--date", today, TZ=first_zone)
@@ -97,9 +100,14 @@ class CliTests(unittest.TestCase):
         self.assertEqual(repeat.returncode, 0)
         self.assertTrue(repeat.stdout.startswith("此卦本座已断。哼，同日无须再问 ("))
         self.assertNotIn("符卡：", repeat.stdout)
-        self.assertIn("符卡：", self.run_cli(TZ=second_zone).stdout)
-        self.assertEqual(self.run_cli(TZ=first_zone).stdout, repeat.stdout)
         self.assertEqual(self.run_cli("--date", today, TZ=first_zone).stdout, preview.stdout)
+
+    @unittest.skipIf(os.name == "nt", "Windows 不使用 IANA TZ 环境变量切换本地时区")
+    def test_daily_draw_date_rollover(self):
+        first = self.run_cli(TZ="Pacific/Kiritimati")
+        self.assertIn("符卡：", first.stdout)
+        self.assertIn("符卡：", self.run_cli(TZ="Etc/GMT+12").stdout)
+        self.assertIn("此卦本座已断", self.run_cli(TZ="Pacific/Kiritimati").stdout)
 
     def test_concurrent_daily_draw_only_prints_one_card(self):
         with ThreadPoolExecutor(max_workers=8) as executor:
@@ -142,6 +150,7 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("★", result.stdout)
         self.assertNotIn("\x1b", self.run_cli().stdout)
 
+    @unittest.skipIf(os.name == "nt", "需要 POSIX 伪终端")
     def test_interactive_followup_menu(self):
         def run_terminal(keys, *args, width=76):
             master, slave = pty.openpty()
@@ -206,6 +215,7 @@ class CliTests(unittest.TestCase):
                 self.assertNotIn("二选一", run_terminal(b"", *args))
         self.assertNotIn("二选一", self.run_cli().stdout)
 
+    @unittest.skipIf(os.name == "nt", "需要 POSIX 伪终端")
     def test_tty_ansi_emoji_and_no_color(self):
         for extra, colored in (({}, True), ({"NO_COLOR": "1"}, False), ({"TERM": "dumb"}, False)):
             master, slave = pty.openpty()
@@ -260,8 +270,9 @@ class CliTests(unittest.TestCase):
             values = list(pool.map(lambda _: load_identity(self.state), range(30)))
         self.assertEqual(len(set(values)), 1)
         key = self.state / "user-id"
-        self.assertEqual(key.stat().st_mode & 0o777, 0o600)
-        self.assertEqual(self.state.stat().st_mode & 0o777, 0o700)
+        if os.name != "nt":
+            self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(self.state.stat().st_mode & 0o777, 0o700)
         self.assertEqual(list(self.state.iterdir()), [key])
         key.write_text("broken", encoding="utf-8")
         with self.assertRaises(IdentityError):
@@ -271,19 +282,62 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertNotIn("Traceback", result.stderr)
 
-    def test_symlink_and_unwritable_state_errors(self):
+    @unittest.skipUnless(os.name == "nt", "需要 Windows 用户目录")
+    def test_windows_state_directory(self):
+        profile = Path(self.temp.name) / "用户"
+        local = Path(self.temp.name) / "本地应用"
+        with patch.dict(os.environ, USERPROFILE=str(profile), LOCALAPPDATA=str(local),
+                        DAILY_FORTUNE_HOME=str(self.state)):
+            self.assertEqual(state_directory(), self.state)
+            del os.environ["DAILY_FORTUNE_HOME"]
+            self.assertEqual(state_directory(), local / "daily-fortune" / "state")
+            os.environ["LOCALAPPDATA"] = "relative"
+            with self.assertRaises(IdentityError):
+                state_directory()
+            del os.environ["LOCALAPPDATA"]
+            self.assertEqual(state_directory(), profile / "AppData" / "Local" / "daily-fortune" / "state")
+
+    def test_symlink_state_errors(self):
         target = Path(self.temp.name) / "target"
         target.mkdir()
-        self.state.symlink_to(target)
+        try:
+            self.state.symlink_to(target, target_is_directory=True)
+        except OSError as exc:
+            if os.name == "nt" and exc.winerror == 1314:
+                self.skipTest("Windows 当前用户无法创建符号链接")
+            raise
         with self.assertRaises(IdentityError):
             load_identity(self.state)
-        self.state.unlink()
+
+    @unittest.skipIf(os.name == "nt", "需要 POSIX 目录权限")
+    def test_unwritable_state_errors(self):
         self.state.mkdir(mode=0o500)
         try:
             with self.assertRaises(IdentityError):
                 load_identity(self.state)
         finally:
             self.state.chmod(0o700)
+
+    def test_state_files_reject_symlinks(self):
+        self.state.mkdir()
+        target = Path(self.temp.name) / "target"
+        target.write_bytes((USER + "\n").encode("ascii"))
+        key = self.state / "user-id"
+        try:
+            key.symlink_to(target)
+        except OSError as exc:
+            if os.name == "nt" and exc.winerror == 1314:
+                self.skipTest("Windows 当前用户无法创建符号链接")
+            raise
+        with self.assertRaises(IdentityError):
+            load_identity(self.state)
+
+        day = date(2026, 11, 8)
+        (self.state / f"drawn-{day.isoformat()}").symlink_to(target)
+        with self.assertRaises(DrawMemoryError):
+            with daily_draw(self.state, day):
+                self.fail("state symlink was opened")
+        self.assertEqual(target.read_bytes(), (USER + "\n").encode("ascii"))
 
 
 class LayoutTests(unittest.TestCase):

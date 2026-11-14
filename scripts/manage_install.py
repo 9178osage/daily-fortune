@@ -3,13 +3,12 @@
 import sys
 
 if sys.version_info < (3, 9):
-    print("需要 Python 3.9 或更新版本：https://www.python.org/downloads/macos/", file=sys.stderr)
+    print("需要 Python 3.9 或更新版本：https://www.python.org/downloads/", file=sys.stderr)
     sys.exit(1)
 
 import argparse
 from contextlib import contextmanager
 import ctypes
-import fcntl
 import hashlib
 import json
 import os
@@ -21,15 +20,23 @@ import stat
 import subprocess
 import tempfile
 
+WINDOWS = os.name == "nt"
+if WINDOWS:
+    import msvcrt
+else:
+    import fcntl
 
-COMMAND = "今日运势"
-BASE = Path("share/daily-fortune")
+COMMAND = "daily-fortune" if WINDOWS else "今日运势"
+BASE = Path() if WINDOWS else Path("share/daily-fortune")
 APP = BASE / "app"
 STATE = BASE / "state"
 RECEIPT = BASE / "receipt.json"
-LAUNCHER = Path("bin") / COMMAND
-REQUIRED = {str(LAUNCHER), str(APP / "main.py"), str(APP / "daily_fortune/__init__.py")}
-PACKAGE_FILE = re.compile(r"share/daily-fortune/app/daily_fortune/[A-Za-z_][A-Za-z_0-9]*\.py\Z")
+LAUNCHER = Path("bin") / (COMMAND + ".cmd" if WINDOWS else COMMAND)
+LOCK_NAME = ".install.lock"
+BACKUPS = "backups"
+INSTALL_SCRIPT = ".\\install.ps1" if WINDOWS else "./install.sh"
+REQUIRED = {LAUNCHER.as_posix(), (APP / "main.py").as_posix(), (APP / "daily_fortune/__init__.py").as_posix()}
+PACKAGE_FILE = re.compile(re.escape((APP / "daily_fortune").as_posix()) + r"/[A-Za-z_][A-Za-z_0-9]*\.py\Z")
 
 
 class InstallError(Exception):
@@ -47,9 +54,15 @@ def digest(data):
 def regular(path):
     """lstat intentionally refuses links, devices, and dangling links."""
     try:
-        return stat.S_ISREG(path.lstat().st_mode)
+        info = path.lstat()
+        return stat.S_ISREG(info.st_mode) and not reparse_point(info)
     except FileNotFoundError:
         return False
+
+
+def reparse_point(info):
+    # Windows junctions and other name substitutions need not be symlinks.
+    return bool(getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
 def safe_parent_chain(prefix, path):
@@ -58,8 +71,10 @@ def safe_parent_chain(prefix, path):
     current = prefix
     for part in relative.parts:
         current = current / part
-        if exists(current) and (current.is_symlink() or not current.is_dir()):
-            raise InstallError("目录不是普通目录或为符号链接，已停止：{}".format(current))
+        if exists(current):
+            info = current.lstat()
+            if not stat.S_ISDIR(info.st_mode) or reparse_point(info):
+                raise InstallError("目录不是普通目录或为符号链接，已停止：{}".format(current))
 
 
 def make_dir(prefix, path, made, mode=0o755):
@@ -83,7 +98,8 @@ def write_new(path, content, mode):
         with os.fdopen(fd, "wb") as stream:
             stream.write(content)
             stream.flush()
-            os.fchmod(stream.fileno(), mode)
+            if not WINDOWS:
+                os.fchmod(stream.fileno(), mode)
     except OSError:
         # A failed write may have left a partial file before it was receipted.
         if exists(path) and path.lstat().st_ino == created.st_ino:
@@ -100,7 +116,8 @@ def check_base(prefix):
     base = prefix / BASE
     safe_parent_chain(prefix, base)
     if base.exists():
-        unknown = set(p.name for p in base.iterdir()) - {"state"}
+        allowed = {"state", "bin", LOCK_NAME, BACKUPS} if WINDOWS else {"state"}
+        unknown = set(p.name for p in base.iterdir()) - allowed
         if unknown:
             raise InstallError("安装目录已有文件，拒绝覆盖：{}（{}）".format(base, "、".join(sorted(unknown))))
     state = prefix / STATE
@@ -116,9 +133,9 @@ def application_payloads():
         raise InstallError("源码不完整：需要 main.py 和 daily_fortune/__init__.py。")
     payloads = {}
     for original, relative in source_files:
-        if not regular(original) or (relative != APP / "main.py" and not PACKAGE_FILE.fullmatch(str(relative))):
+        if not regular(original) or (relative != APP / "main.py" and not PACKAGE_FILE.fullmatch(relative.as_posix())):
             raise InstallError("源码包含不支持的文件：{}".format(original))
-        payloads[str(relative)] = original.read_bytes()
+        payloads[relative.as_posix()] = original.read_bytes()
     return payloads
 
 
@@ -127,15 +144,29 @@ def receipt_bytes(files):
     return (json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
-def install(prefix):
-    payloads = application_payloads()
-    conflict = shutil.which(COMMAND)
-    if conflict:
-        raise InstallError("PATH 已有同名命令，拒绝覆盖或遮蔽：{}".format(conflict))
-    check_base(prefix)
-    safe_parent_chain(prefix, prefix / "bin")
-    if exists(prefix / LAUNCHER):
-        raise InstallError("命令文件已存在，拒绝覆盖：{}".format(prefix / LAUNCHER))
+def launcher_bytes(prefix):
+    if WINDOWS:
+        # ASCII source and a relative path preserve Unicode and spaces in the
+        # installation path at any cmd.exe code page.
+        launcher = (
+            '@echo off\r\n'
+            'setlocal DisableDelayedExpansion\r\n'
+            'set NoDefaultCurrentDirectoryInExePath=1\r\n'
+            'set "DAILY_FORTUNE_HOME=%~dp0..\\state"\r\n'
+            'python.exe -I -B -c "import sys; raise SystemExit(not sys.version_info >= (3, 9))" >nul 2>&1\r\n'
+            'if not errorlevel 1 goto use-python\r\n'
+            'py.exe -3 -I -B -c "import sys; raise SystemExit(not sys.version_info >= (3, 9))" >nul 2>&1\r\n'
+            'if not errorlevel 1 goto use-py\r\n'
+            'echo Daily Fortune requires Python 3.9 or newer. 1>&2\r\n'
+            'exit /b 1\r\n'
+            ':use-python\r\n'
+            'python.exe -I -B "%~dp0..\\app\\main.py" %*\r\n'
+            'exit /b %errorlevel%\r\n'
+            ':use-py\r\n'
+            'py.exe -3 -I -B "%~dp0..\\app\\main.py" %*\r\n'
+            'exit /b %errorlevel%\r\n'
+        )
+        return launcher.encode("ascii")
     python = str(Path(sys.executable).resolve())
     launcher = (
         "#!/bin/sh\n"
@@ -148,7 +179,19 @@ def install(prefix):
         "exec {} -I -B {} \"$@\"\n"
     ).format(shlex.quote(str(prefix / STATE)), shlex.quote(python),
              shlex.quote(python), shlex.quote(str(prefix / APP / "main.py")))
-    payloads[str(LAUNCHER)] = launcher.encode("utf-8")
+    return launcher.encode("utf-8")
+
+
+def install(prefix):
+    payloads = application_payloads()
+    conflict = shutil.which(COMMAND)
+    if conflict:
+        raise InstallError("PATH 已有同名命令，拒绝覆盖或遮蔽：{}".format(conflict))
+    check_base(prefix)
+    safe_parent_chain(prefix, prefix / "bin")
+    if exists(prefix / LAUNCHER):
+        raise InstallError("命令文件已存在，拒绝覆盖：{}".format(prefix / LAUNCHER))
+    payloads[LAUNCHER.as_posix()] = launcher_bytes(prefix)
     made_dirs = []
     written = []
     try:
@@ -162,7 +205,7 @@ def install(prefix):
         made_dirs.append(prefix / APP / "daily_fortune")
         for relative, content in payloads.items():
             target = prefix / relative
-            write_new(target, content, 0o755 if relative == str(LAUNCHER) else 0o644)
+            write_new(target, content, 0o755 if relative == LAUNCHER.as_posix() else 0o644)
             written.append((target, digest(content)))
         receipt_data = receipt_bytes({relative: digest(content) for relative, content in payloads.items()})
         write_new(prefix / RECEIPT, receipt_data, 0o600)
@@ -179,6 +222,12 @@ def install(prefix):
                 pass
         raise
     print("安装完成：{}".format(prefix / LAUNCHER))
+    if WINDOWS:
+        print("运行：& {}".format(powershell_quote(prefix / LAUNCHER)))
+        print("要在当前 PowerShell 中使用 daily-fortune 命令，执行：")
+        print("  $env:Path = {} + ';' + $env:Path".format(powershell_quote(prefix / "bin")))
+        print("卸载：在源码目录执行 .\\uninstall.ps1 -Prefix {}（保留用户标识）。".format(powershell_quote(prefix)))
+        return
     path_entries = [str(Path(item).expanduser().resolve()) for item in os.environ.get("PATH", "").split(os.pathsep) if item]
     if str(prefix / "bin") not in path_entries:
         print("该目录尚未加入 PATH。当前终端执行：")
@@ -186,6 +235,10 @@ def install(prefix):
         print("若希望新终端生效，请自行将上一行加入 ~/.zshrc（安装器不会修改 shell 配置）。")
     print("运行：{}".format(COMMAND))
     print("卸载：在源码目录执行 sh uninstall.sh --prefix {}（保留用户标识）。".format(shlex.quote(str(prefix))))
+
+
+def powershell_quote(value):
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def unique_object(pairs):
@@ -228,7 +281,18 @@ def installation_lock(prefix):
     base = prefix / BASE
     safe_parent_chain(prefix, base)
     if not base.is_dir():
-        raise InstallError("没有找到安装目录，请先执行 ./install.sh：{}".format(base))
+        raise InstallError("没有找到安装目录，请先执行 {}：{}".format(INSTALL_SCRIPT, base))
+    if WINDOWS:
+        lock = base / LOCK_NAME
+        if exists(lock) and not regular(lock):
+            raise InstallError("安装锁不是普通文件：{}".format(lock))
+        with lock.open("a+b") as stream:
+            stream.seek(0)
+            # Windows accepts locking a byte beyond EOF. Closing the handle
+            # releases the lock and leaves the inode for the next process.
+            msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+            yield
+        return
     fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
@@ -240,7 +304,10 @@ def installation_lock(prefix):
 def check_installation(prefix, *, removing=False):
     files = read_receipt(prefix)
     base = prefix / BASE
-    unknown = set(p.name for p in base.iterdir()) - {"app", "state", "receipt.json"}
+    allowed = {"app", "state", "receipt.json"}
+    if WINDOWS:
+        allowed.update({"bin", LOCK_NAME, BACKUPS})
+    unknown = set(p.name for p in base.iterdir()) - allowed
     if unknown:
         raise InstallError("安装目录含未知文件：{}".format("、".join(sorted(unknown))))
     safe_parent_chain(prefix, prefix / STATE)
@@ -259,11 +326,11 @@ def check_installation(prefix, *, removing=False):
     for current, directories, names in os.walk(str(prefix / APP), followlinks=False):
         for name in directories:
             path = Path(current) / name
-            if path.is_symlink() or path not in allowed_dirs:
+            if reparse_point(path.lstat()) or path.is_symlink() or path not in allowed_dirs:
                 raise InstallError("程序目录含未知目录或符号链接：{}".format(path))
         for name in names:
-            actual_files.add(str((Path(current) / name).relative_to(prefix)))
-    expected_app_files = set(files) - {str(LAUNCHER)}
+            actual_files.add((Path(current) / name).relative_to(prefix).as_posix())
+    expected_app_files = set(files) - {LAUNCHER.as_posix()}
     if actual_files != expected_app_files:
         raise InstallError("程序文件缺失或含未知文件，请检查 {}。".format(prefix / APP))
     # Finish all validation before removing anything. The receipt itself cannot
@@ -279,7 +346,7 @@ def check_installation(prefix, *, removing=False):
 def uninstall(prefix):
     files = check_installation(prefix, removing=True)
     for relative, expected in files.items():
-        if relative == str(LAUNCHER):
+        if relative == LAUNCHER.as_posix():
             continue
         path = prefix / relative
         # A second check also catches common concurrent edits during removal.
@@ -293,7 +360,7 @@ def uninstall(prefix):
     # Preflight cannot make this multi-file operation atomic against concurrent
     # edits, chmod, ACL or filesystem-flag changes; do not run concurrent installers.
     launcher = prefix / LAUNCHER
-    if not regular(launcher) or digest(launcher.read_bytes()) != files[str(LAUNCHER)]:
+    if not regular(launcher) or digest(launcher.read_bytes()) != files[LAUNCHER.as_posix()]:
         raise InstallError("卸载期间启动器发生变化，已保留：{}".format(launcher))
     launcher.unlink()
     print("卸载完成。已保留用户数据：{}".format(prefix / STATE))
@@ -301,6 +368,10 @@ def uninstall(prefix):
 
 
 def rename_exclusive(source, target):
+    if WINDOWS:
+        # On Windows os.rename fails if the destination already exists.
+        os.rename(source, target)
+        return
     # Darwin's renamex_np with RENAME_EXCL refuses to replace an existing
     # destination even if it appeared after our checks. See sys/stdio.h.
     rename = ctypes.CDLL(None, use_errno=True).renamex_np
@@ -323,14 +394,14 @@ def verify_command(command, env=None):
 
 
 def update(prefix):
-    if sys.platform != "darwin":
-        raise InstallError("保留备份的原地更新目前支持 macOS。")
+    if sys.platform not in {"darwin", "win32"}:
+        raise InstallError("保留备份的原地更新目前支持 macOS 和 Windows。")
     base = prefix / BASE
     launcher = prefix / LAUNCHER
     old_files = check_installation(prefix)
     payloads = application_payloads()
     new_files = {relative: digest(content) for relative, content in payloads.items()}
-    new_files[str(LAUNCHER)] = old_files[str(LAUNCHER)]
+    new_files[LAUNCHER.as_posix()] = old_files[LAUNCHER.as_posix()]
     verify_command([str(launcher), "--version"])
     if new_files == old_files:
         print("已安装的程序与当前源码一致。")
@@ -338,7 +409,11 @@ def update(prefix):
     if not os.access(base, os.W_OK | os.X_OK):
         raise InstallError("更新所需目录缺少写入、执行权限：{}".format(base))
 
-    with tempfile.TemporaryDirectory(prefix=".daily-fortune-update-", dir=base.parent) as directory:
+    backup_parent = base / BACKUPS if WINDOWS else base.parent
+    if WINDOWS:
+        safe_parent_chain(prefix, backup_parent)
+        backup_parent.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".daily-fortune-update-", dir=backup_parent) as directory:
         stage = Path(directory)
         (stage / "app/daily_fortune").mkdir(parents=True)
         for relative, content in payloads.items():
@@ -351,7 +426,7 @@ def update(prefix):
 
         if check_installation(prefix) != old_files:
             raise InstallError("安装内容在验证期间发生变化，请重试。")
-        backup = Path(tempfile.mkdtemp(prefix="daily-fortune-backup-", dir=base.parent))
+        backup = Path(tempfile.mkdtemp(prefix="daily-fortune-backup-", dir=backup_parent))
         moves = (
             (base / APP.name, backup / APP.name),
             (base / RECEIPT.name, backup / RECEIPT.name),
@@ -383,18 +458,37 @@ def update(prefix):
     print("原版本备份：{}".format(backup))
 
 
+def default_prefix():
+    if not WINDOWS:
+        return Path.home() / ".local"
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    app_data = Path(local_app_data) if local_app_data else Path.home() / "AppData/Local"
+    if not app_data.is_absolute():
+        raise InstallError("LOCALAPPDATA 必须是绝对路径。")
+    return app_data / COMMAND
+
+
 def main():
+    if WINDOWS:
+        # Windows PowerShell and redirected output can use a legacy code page.
+        for stream in (sys.stdout, sys.stderr):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="今日运势的离线用户目录安装器")
     actions = {"install": ("安装", install), "uninstall": ("卸载", uninstall), "update": ("更新", update)}
     parser.add_argument("action", choices=actions)
-    parser.add_argument("--prefix", default=str(Path.home() / ".local"), help="安装根目录（默认 ~/.local）")
+    location = r"%LOCALAPPDATA%\daily-fortune" if WINDOWS else "~/.local"
+    parser.add_argument("--prefix", help="安装根目录（默认 {}）".format(location))
     args = parser.parse_args()
     label, action = actions[args.action]
     try:
-        prefix = prefix_path(args.prefix)
-        if prefix == Path("/"):
+        prefix = prefix_path(args.prefix if args.prefix is not None else default_prefix())
+        if prefix == prefix.parent:
             raise InstallError("不能以系统根目录作为安装根目录。")
-        if action is install:
+        if action is install and WINDOWS:
+            prefix.mkdir(parents=True, exist_ok=True)
+            with installation_lock(prefix):
+                action(prefix)
+        elif action is install:
             action(prefix)
         else:
             with installation_lock(prefix):

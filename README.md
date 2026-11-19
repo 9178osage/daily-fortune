@@ -2,7 +2,7 @@
 
 在 Windows 或 macOS 终端每天抽一张中文短签，看看财运、桃花运、事业运，以及当天的符卡和点评。还可以展开详卦、领取一个小任务，或让程序替你在两个日常选项中挑一个。运行时完全离线，只用 Python 标准库。
 
-**1.6.0 新增 Windows 命令行支持。** [Windows 安装](#windowspowershell) · [macOS 安装](#macos) · [下载 main 分支源码 ZIP](https://github.com/9178osage/daily-fortune/archive/refs/heads/main.zip)
+**当前源码版本 1.6.1。** [Windows 安装](#windowspowershell) · [macOS 安装](#macos) · [下载已发布版本](https://github.com/9178osage/daily-fortune/releases)
 
 ```text
 穷观阵已启，本座观得艮象 (｡･ω･｡)（仅供娱乐）
@@ -18,7 +18,9 @@
 
 ## 快速开始
 
-需要 Python 3.9 或更高版本。下载源码 ZIP 后解压，或用 Git 克隆，然后在源码目录里执行对应平台的命令。
+需要 Python 3.9 或更高版本。在 [GitHub Releases](https://github.com/9178osage/daily-fortune/releases) 选择版本，下载该版本的 `daily-fortune-vX.Y.Z.zip` 和 `SHA256SUMS`，校验后解压。macOS 可在下载目录执行 `shasum -a 256 -c SHA256SUMS`。Windows 可用 `Get-FileHash -Algorithm SHA256` 计算 ZIP 的哈希，再与 `SHA256SUMS` 对照。
+
+如果 GitHub 自动生成的源码 ZIP 下载中断，请重新下载完整文件再校验。也可以用 Git 获取当前源码。进入解压或克隆得到的目录后，执行对应平台的安装命令。
 
 ```sh
 git clone https://github.com/9178osage/daily-fortune.git
@@ -86,6 +88,8 @@ export PATH="$HOME/.local/bin:$PATH"
 
 在克隆下来的目录中执行 `git pull --ff-only` 获取新版。如果用的是 ZIP，则改在新版解压目录中执行更新。更新和卸载都会保留匿名标识和抽签记录。
 
+如果更新或卸载进程在切换时被终止，用当前版本或更新版本的维护脚本重试。脚本会先恢复上次未完成的切换，再执行本次命令。
+
 ### Windows
 
 在新版源码目录中执行更新。
@@ -122,7 +126,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 <summary>macOS 自定义安装与维护</summary>
 
 - 安装、更新和卸载均接受 `--prefix`。使用自定义目录时，三次操作需指向同一个目录。
-- 可用 `PYTHON=/绝对路径/python3 ./install.sh` 选择解释器。启动器使用安装时的 Python 绝对路径。若该 Python 已移除，可通过同样的 `PYTHON=…` 写法指定解释器来卸载，再重新安装。
+- 可用 `PYTHON=/绝对路径/python3 ./install.sh` 选择解释器。启动器绑定 Python 的绝对路径。用 `PYTHON=/新路径/python3 ./update.sh` 可以更换绑定，即使原解释器已移除也可以更新。
 - 安装时若遇到已存在的同名命令或安装文件，安装器会停止并提示冲突。卸载会核对清单和文件校验值，遇到改动或未知文件时会停止。
 - 更新会校验已安装文件并验证新版本，再切换程序副本。旧程序和清单保存在更新完成时打印的备份目录。
 
@@ -185,3 +189,21 @@ py -3 -B -m unittest -v tests.test_engine tests.test_cli tests.test_windows
 - [设计调研与来源](docs/RESEARCH.md)
 - [历史测试记录与环境](docs/TESTING.md)
 - [Windows 与 macOS 自动化测试](https://github.com/9178osage/daily-fortune/actions/workflows/tests.yml)
+
+### 类型检查与 Lint
+
+在 macOS 上可将开发依赖装在虚拟环境中运行以下检查。Windows PowerShell 脚本和 GitHub Actions 工作流也由 CI 检查。
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+python -m mypy --platform darwin --exclude 'daily_fortune/_windows\.py$'
+python -m mypy --platform win32
+python -m ruff check .
+shellcheck --norc -s sh install.sh update.sh uninstall.sh 今日运势
+```
+
+### 发布
+
+推送与 `daily_fortune/__init__.py` 版本号一致的 `vX.Y.Z` 标签会启动发布流程。Windows 和 macOS 测试及静态检查通过后，工作流打包该标签的源码，生成 SHA-256 校验文件，从 ZIP 试装，再将两份文件上传到 GitHub Releases。

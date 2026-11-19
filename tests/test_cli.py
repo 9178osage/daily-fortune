@@ -3,14 +3,13 @@ from datetime import date
 import errno
 import os
 from pathlib import Path
-import socket
 import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
-if os.name != "nt":
+if sys.platform != "win32":
     import pty
     import select
     import termios
@@ -19,7 +18,7 @@ if os.name != "nt":
 from daily_fortune.draw_memory import DrawMemoryError, daily_draw
 from daily_fortune.engine import generate
 from daily_fortune.identity import IdentityError, load_identity, state_directory
-from daily_fortune.render import ANSI, clusters, display_width, render, wrap
+from daily_fortune.render import clusters, display_width, render, wrap
 
 ROOT = Path(__file__).resolve().parents[1]
 USER = "0123456789abcdef0123456789abcdef"
@@ -76,15 +75,17 @@ class CliTests(unittest.TestCase):
             self.assertFalse(self.state.exists())
 
     def test_closed_output_pipe_exits_quietly(self):
-        read_fd, write_fd = os.pipe()
-        os.close(read_fd)
-        try:
-            process = subprocess.run([sys.executable, "-I", "-B", str(ROOT / "main.py")],
-                                     env=self.env, stdout=write_fd, stderr=subprocess.PIPE)
-        finally:
-            os.close(write_fd)
-        self.assertEqual(process.returncode, 0)
-        self.assertEqual(process.stderr, b"")
+        for args in (("--help",), ("--version",), ("--full",), ()):
+            with self.subTest(args=args):
+                read_fd, write_fd = os.pipe()
+                os.close(read_fd)
+                try:
+                    process = subprocess.run([sys.executable, "-I", "-B", str(ROOT / "main.py"), *args],
+                                             env=self.env, stdout=write_fd, stderr=subprocess.PIPE, timeout=10)
+                finally:
+                    os.close(write_fd)
+                self.assertEqual(process.returncode, 0)
+                self.assertEqual(process.stderr, b"")
         self.assertIn("符卡：", self.run_cli().stdout)
 
     def test_daily_draw_memory(self):
@@ -150,99 +151,113 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("★", result.stdout)
         self.assertNotIn("\x1b", self.run_cli().stdout)
 
-    @unittest.skipIf(os.name == "nt", "需要 POSIX 伪终端")
-    def test_interactive_followup_menu(self):
-        def run_terminal(keys, *args, width=76):
-            master, slave = pty.openpty()
-            process = None
-            chunks = []
-            deadline = time.monotonic() + 10
-            try:
-                terminal_attributes = termios.tcgetattr(slave)
-                terminal_attributes[3] &= ~termios.ECHO
-                termios.tcsetattr(slave, termios.TCSANOW, terminal_attributes)
-                process = subprocess.Popen(
-                    [sys.executable, "-B", str(ROOT / "main.py"), *args],
-                    env=dict(self.env, TERM="xterm-256color", NO_COLOR="1", COLUMNS=str(width),
-                             LC_ALL="C", PYTHONUTF8="0", PYTHONIOENCODING="ascii"),
-                    stdin=slave, stdout=slave, stderr=slave,
-                )
-                os.close(slave)
-                slave = None
-                if keys:
-                    os.write(master, keys)
-                while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0 or not select.select([master], [], [], remaining)[0]:
-                        self.fail(f"Interactive CLI timed out: {b''.join(chunks).decode('utf-8', 'replace')}")
+    def test_full_cli_displays_rotated_prose(self):
+        self.state.mkdir(parents=True)
+        (self.state / "user-id").write_text(USER + "\n", encoding="ascii")
+        days = (date(2026, 11, 8), date(2026, 11, 9))
+        reports = [generate(day, USER) for day in days]
+        self.assertEqual(reports[0].grade, reports[1].grade)
+        self.assertNotEqual(reports[0].interpretation, reports[1].interpretation)
+        for day, report in zip(days, reports):
+            result = self.run_cli("--full", "--plain", "--date", day.isoformat())
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f"解签：{report.interpretation}", result.stdout)
+            for score in report.scores:
+                self.assertIn(score.note, result.stdout)
+
+    if sys.platform != "win32":
+        def test_interactive_followup_menu(self):
+
+            def run_terminal(keys, *args, width=76):
+                master, slave = pty.openpty()
+                process = None
+                chunks: list[bytes] = []
+                deadline = time.monotonic() + 10
+                try:
                     try:
-                        chunk = os.read(master, 8192)
-                    except OSError as exc:
-                        if exc.errno != errno.EIO:
-                            raise
-                        break
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-                output = b"".join(chunks).decode("utf-8")
-                self.assertEqual(process.wait(timeout=2), 0, output)
-                return output
-            finally:
-                if process is not None and process.poll() is None:
-                    process.kill()
-                    process.wait(timeout=2)
-                os.close(master)
-                if slave is not None:
-                    os.close(slave)
+                        terminal_attributes = termios.tcgetattr(slave)
+                        terminal_attributes[3] &= ~termios.ECHO
+                        termios.tcsetattr(slave, termios.TCSANOW, terminal_attributes)
+                        process = subprocess.Popen(
+                            [sys.executable, "-B", str(ROOT / "main.py"), *args],
+                            env=dict(self.env, TERM="xterm-256color", NO_COLOR="1", COLUMNS=str(width),
+                                     LC_ALL="C", PYTHONUTF8="0", PYTHONIOENCODING="ascii"),
+                            stdin=slave, stdout=slave, stderr=slave,
+                        )
+                    finally:
+                        os.close(slave)
+                    if keys:
+                        os.write(master, keys)
+                    while True:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not select.select([master], [], [], remaining)[0]:
+                            self.fail(f"Interactive CLI timed out: {b''.join(chunks).decode('utf-8', 'replace')}")
+                        try:
+                            chunk = os.read(master, 8192)
+                        except OSError as exc:
+                            if exc.errno != errno.EIO:
+                                raise
+                            break
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                    output = b"".join(chunks).decode("utf-8")
+                    self.assertEqual(process.wait(timeout=2), 0, output)
+                    return output
+                finally:
+                    if process is not None and process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=2)
+                    os.close(master)
 
-        output = run_terminal("1\n1\n2\n3\n清茶\n糕点\n\n".encode("utf-8"))
-        self.assertLess(output.index("符卡："), output.index("详卦"))
-        self.assertEqual(output.count("今日总览"), 2)
-        self.assertIn("今日小任务：", output)
-        self.assertIn("二选一", output)
-        self.assertRegex(output, r"本座抽得：(?:清茶|糕点)")
-        self.assertIn("仅供娱乐", output.split("本座抽得：", 1)[1])
+            output = run_terminal("1\n1\n2\n3\n清茶\n糕点\n\n".encode("utf-8"))
+            self.assertLess(output.index("符卡："), output.index("详卦"))
+            self.assertEqual(output.count("今日总览"), 2)
+            self.assertIn("今日小任务：", output)
+            self.assertIn("二选一", output)
+            self.assertRegex(output, r"本座抽得：(?:清茶|糕点)")
+            self.assertIn("仅供娱乐", output.split("本座抽得：", 1)[1])
 
-        repeat = run_terminal(b"2\n\n")
-        self.assertIn("此卦本座已断", repeat)
-        self.assertIn("今日小任务：", repeat)
-        narrow = run_terminal("3\n茶\n糕\n\n".encode("utf-8"), width=12)
-        self.assertRegex(narrow, r"第一项[^\r\n]*\r?\n返回）：")
-        self.assertRegex(narrow, r"第二项[^\r\n]*\r?\n返回）：")
+            repeat = run_terminal(b"2\n\n")
+            self.assertIn("此卦本座已断", repeat)
+            self.assertIn("今日小任务：", repeat)
+            narrow = run_terminal("3\n茶\n糕\n\n".encode("utf-8"), width=12)
+            self.assertRegex(narrow, r"第一项[^\r\n]*\r?\n返回）：")
+            self.assertRegex(narrow, r"第二项[^\r\n]*\r?\n返回）：")
+            choice = "清茶　👩🏽‍💻"
+            self.assertIn(f"本座抽得：{choice}", run_terminal(f"3\n{choice}\n{choice}\n\n".encode("utf-8")))
 
-        for args in (("--full",), ("--date", "2026-11-08"), ("--plain",)):
-            with self.subTest(args=args):
-                self.assertNotIn("二选一", run_terminal(b"", *args))
-        self.assertNotIn("二选一", self.run_cli().stdout)
+            for args in (("--full",), ("--date", "2026-11-08"), ("--plain",)):
+                with self.subTest(args=args):
+                    self.assertNotIn("二选一", run_terminal(b"", *args))
+            self.assertNotIn("二选一", self.run_cli().stdout)
 
-    @unittest.skipIf(os.name == "nt", "需要 POSIX 伪终端")
-    def test_tty_ansi_emoji_and_no_color(self):
-        for extra, colored in (({}, True), ({"NO_COLOR": "1"}, False), ({"TERM": "dumb"}, False)):
-            master, slave = pty.openpty()
-            try:
-                tty_env = dict(self.env, TERM="xterm-256color", NO_COLOR="")
-                tty_env.update(extra)
-                proc = subprocess.Popen([sys.executable, "-I", "-B", str(ROOT / "main.py"), "--full", "--date", "2026-11-08"],
-                                        env=tty_env, stdout=slave, stderr=slave)
-                os.close(slave)
-                slave = None
-                chunks = []
-                while True:
+        def test_tty_ansi_emoji_and_no_color(self):
+            for extra, colored in (({}, True), ({"NO_COLOR": "1"}, False), ({"TERM": "dumb"}, False)):
+                master, slave = pty.openpty()
+                try:
                     try:
-                        chunk = os.read(master, 8192)
-                    except OSError:
-                        break
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-                self.assertEqual(proc.wait(timeout=10), 0)
-                output = b"".join(chunks).decode("utf-8")
-                self.assertEqual("\x1b[" in output, colored)
-                self.assertEqual("🔮" in output, extra.get("TERM") != "dumb")
-            finally:
-                os.close(master)
-                if slave is not None:
-                    os.close(slave)
+                        tty_env = dict(self.env, TERM="xterm-256color", NO_COLOR="")
+                        tty_env.update(extra)
+                        proc = subprocess.Popen([sys.executable, "-I", "-B", str(ROOT / "main.py"), "--full", "--date", "2026-11-08"],
+                                                env=tty_env, stdout=slave, stderr=slave)
+                    finally:
+                        os.close(slave)
+                    chunks = []
+                    while True:
+                        try:
+                            chunk = os.read(master, 8192)
+                        except OSError:
+                            break
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                    self.assertEqual(proc.wait(timeout=10), 0)
+                    output = b"".join(chunks).decode("utf-8")
+                    self.assertEqual("\x1b[" in output, colored)
+                    self.assertEqual("🔮" in output, extra.get("TERM") != "dumb")
+                finally:
+                    os.close(master)
 
     def test_zero_terminal_columns_use_readable_fallback(self):
         import contextlib
@@ -303,7 +318,7 @@ class CliTests(unittest.TestCase):
         try:
             self.state.symlink_to(target, target_is_directory=True)
         except OSError as exc:
-            if os.name == "nt" and exc.winerror == 1314:
+            if sys.platform == "win32" and exc.winerror == 1314:
                 self.skipTest("Windows 当前用户无法创建符号链接")
             raise
         with self.assertRaises(IdentityError):
@@ -326,7 +341,7 @@ class CliTests(unittest.TestCase):
         try:
             key.symlink_to(target)
         except OSError as exc:
-            if os.name == "nt" and exc.winerror == 1314:
+            if sys.platform == "win32" and exc.winerror == 1314:
                 self.skipTest("Windows 当前用户无法创建符号链接")
             raise
         with self.assertRaises(IdentityError):

@@ -9,6 +9,7 @@ import re
 import shutil
 import stat
 import sys
+from typing import ContextManager
 
 from . import __version__
 from .compact import already_drawn, summarize
@@ -18,7 +19,7 @@ from .followup import show_followups
 from .identity import IdentityError, load_identity, state_directory
 from .render import render, render_compact, wrap
 
-if os.name == "nt":
+if sys.platform == "win32":
     from ._windows import virtual_terminal
 
 
@@ -26,6 +27,11 @@ class Parser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stderr)
         self.exit(2, "今日运势：参数错误：%s\n使用 --help 查看帮助。\n" % message)
+
+    def exit(self, status=0, message=None):
+        # Help and version can leave stdout buffered when argparse exits.
+        sys.stdout.flush()
+        super().exit(status, message)
 
 
 def parse_date(value):
@@ -40,7 +46,7 @@ def parse_date(value):
 def _output_pipe_closed(error):
     if isinstance(error, BrokenPipeError):
         return True
-    if os.name == "nt" and isinstance(error, OSError) and error.errno == errno.EINVAL:
+    if sys.platform == "win32" and isinstance(error, OSError) and error.errno == errno.EINVAL:
         # Older Windows Python can expose a closed pipe as EINVAL.
         try:
             return stat.S_ISFIFO(os.fstat(sys.stdout.fileno()).st_mode)
@@ -62,15 +68,17 @@ def main(argv=None):
     parser.add_argument("--plain", action="store_true", help="用数字显示星级，关闭 ANSI、Emoji 和签后菜单")
     parser.add_argument("--full", action="store_true", help="查看七项星级、黄历和寄语的详细报告")
     parser.add_argument("--date", type=parse_date, metavar="YYYY-MM-DD", help="查看指定日期的模拟运势")
-    args = parser.parse_args(argv)
     try:
+        args = parser.parse_args(argv)
         day = args.date or date.today()
         directory = state_directory()
         identity = load_identity(directory)
         tty = sys.stdout.isatty()
         emoji = tty and os.environ.get("TERM") != "dumb"
         color = emoji and not args.plain and not os.environ.get("NO_COLOR")
-        colors = virtual_terminal(sys.stdout) if color and os.name == "nt" else nullcontext(color)
+        colors: ContextManager[bool] = nullcontext(color)
+        if sys.platform == "win32" and color:
+            colors = virtual_terminal(sys.stdout)
         # Python 3.9 can return zero columns for an unconfigured PTY.
         width = shutil.get_terminal_size(fallback=(76, 24)).columns or 76
         draw = nullcontext(True) if args.date or args.full else daily_draw(directory, day)

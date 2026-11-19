@@ -10,7 +10,8 @@ if sys.version_info < (3, 9):
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from daily_fortune.cli import main
+# The installed launcher uses -I, so the application directory must be added first.
+from daily_fortune.cli import main  # noqa: E402
 
 if __name__ == "__main__":
     raise SystemExit(main())

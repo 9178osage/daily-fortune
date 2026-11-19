@@ -15,27 +15,6 @@ CLOSING_PUNCTUATION = frozenset("，。！？：；、）》】」』…,.!?;:%"
 OPENING_PUNCTUATION = frozenset("（《【「『(")
 
 
-# Brief readings for low, steady, and high ratings, in that order.
-DOMAIN_READINGS = {
-    "overall": ("变数尚多，守势为上。", "卦势未偏，循序即可。", "阵势开明，择要可进。"),
-    "study": ("温旧足矣，勿贪多。", "析其一疑，而后读新。", "可攻一难，仍须求证。"),
-    "career": ("先辨所求，勿轻许诺。", "理其先后，各归其位。", "宜进一事，成后复核。"),
-    "wealth": ("先清旧账，支用有度。", "细核所需，再作取舍。", "盘点有余，仍须量入。"),
-    "social": ("先听其意，言不必多。", "问候有度，留三分余地。", "可开一席话，勿替人作答。"),
-    "love": ("心事且缓，勿凭空臆测。", "所思直言，分寸自守。", "诚言可近，莫强求回应。"),
-    "vitality": ("气力宜养，勿勉强。", "劳逸各有时，行止有度。", "可择轻事活动，知止即可。"),
-}
-
-GRADE_READINGS = {
-    "大吉": "法眼所照，诸路渐通。择一事而成，便是上策。",
-    "中吉": "阵势稳顺，可进一程。得其势，亦须审其变。",
-    "小吉": "卦中有路，徐图可进。小成亦足称吉。",
-    "平": "吉凶未偏，守常自安。",
-    "末吉": "阻滞未消。先整其序，再待其时。",
-    "凶": "啧，卦中变数颇多。收势为上。",
-}
-
-
 def _extension(char):
     code = ord(char)
     return (unicodedata.category(char) in ("Mn", "Me") or
@@ -153,8 +132,7 @@ def render(report, width=76, color=False, plain=False, emoji=False):
             add(line, "32" if score.stars >= 4 else "33" if score.stars <= 2 else None)
         else:
             add(label + "：" + stars)
-        level = 0 if score.stars <= 2 else 1 if score.stars == 3 else 2
-        add(DOMAIN_READINGS[score.key][level], indent="  ")
+        add(score.note, indent="  ")
 
     section("幸运元素")
     for label, value in (("幸运数字", report.number), ("幸运颜色", report.color),
@@ -174,10 +152,10 @@ def render(report, width=76, color=False, plain=False, emoji=False):
     add(f"卦断：{report.grade}", "1;35")
     add("意象：%s" % report.image)
     add(report.poem, indent="  ")
-    add(f"解签：{GRADE_READINGS[report.grade]}")
+    add(f"解签：{report.interpretation}")
 
     section("今日寄语")
-    add(f"本座以为，宜先{report.suitable[0].name}，不宜{report.avoid[1].name}。")
+    add(f"本座以为，{report.message}")
     add("一饮一啄，莫非前定。然最优解仍在人为。")
     add()
     add("仅供娱乐。评分为生成值，不预测未来。", "2")

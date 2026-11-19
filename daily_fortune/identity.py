@@ -5,9 +5,10 @@ from pathlib import Path
 import re
 import secrets
 import stat
+import sys
 import tempfile
 
-if os.name == "nt":
+if sys.platform == "win32":
     from ._windows import open_state_file
 
 
@@ -22,7 +23,7 @@ def state_directory():
         if not path.is_absolute():
             raise IdentityError("DAILY_FORTUNE_HOME 必须是绝对路径。")
         return path
-    if os.name == "nt":
+    if sys.platform == "win32":
         setting = os.environ.get("LOCALAPPDATA")
         base = Path(setting) if setting else Path.home() / "AppData" / "Local"
         if not base.is_absolute():
@@ -39,7 +40,7 @@ def load_identity(directory=None):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         info = directory.lstat()
         if not stat.S_ISDIR(info.st_mode) or (
-            os.name == "nt" and info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            sys.platform == "win32" and info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
         ):
             raise IdentityError("状态目录不能是符号链接，且必须是目录。")
         if not target.exists() and not target.is_symlink():
@@ -51,7 +52,7 @@ def load_identity(directory=None):
                     os.fsync(stream.fileno())
                 try:
                     # Windows rename fails if a concurrent first run already published its ID.
-                    if os.name == "nt":
+                    if sys.platform == "win32":
                         os.rename(temporary, target)
                     else:
                         os.link(temporary, target)
@@ -59,7 +60,7 @@ def load_identity(directory=None):
                     pass
             finally:
                 Path(temporary).unlink(missing_ok=True)
-        if os.name == "nt":
+        if sys.platform == "win32":
             fd = open_state_file(target)
         else:
             fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)

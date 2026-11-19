@@ -10,6 +10,7 @@ permissions:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -33,3 +34,88 @@ jobs:
       - name: Test macOS
         if: runner.os == 'macOS'
         run: python -B -m unittest discover -s tests -v
+      - name: Lint PowerShell
+        if: runner.os == 'Windows' && matrix.python == '3.13'
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
+          Import-Module PSScriptAnalyzer -RequiredVersion 1.24.0
+          $issues = @(Invoke-ScriptAnalyzer -Path . -Recurse)
+          $settings = @{
+            IncludeRules = @('PSUseCompatibleSyntax')
+            Rules = @{PSUseCompatibleSyntax = @{Enable = $true; TargetVersions = @('5.1')}}
+          }
+          $issues += @(Invoke-ScriptAnalyzer -Path . -Recurse -Settings $settings)
+          if ($issues.Count) {
+            $issues | Format-Table -AutoSize
+            exit 1
+          }
+
+  quality:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Type check macOS and Windows
+        run: |
+          python -m mypy --platform darwin --exclude 'daily_fortune/_windows\.py$'
+          python -m mypy --platform win32
+      - name: Lint Python and Shell
+        run: |
+          python -m ruff check .
+          shellcheck --norc -s sh install.sh update.sh uninstall.sh 今日运势
+      - name: Lint GitHub Actions
+        run: |
+          GOBIN="$RUNNER_TEMP" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$RUNNER_TEMP/actionlint"
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [test, quality]
+    runs-on: macos-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Package and verify the tagged source
+        shell: bash
+        run: |
+          version=$(python -B -c 'from daily_fortune import __version__; print(__version__)')
+          if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || $GITHUB_REF_NAME != "v$version" ]]; then
+            printf 'Tag %s does not match package version %s.\n' "$GITHUB_REF_NAME" "$version" >&2
+            exit 1
+          fi
+          package="daily-fortune-$GITHUB_REF_NAME"
+          output="$RUNNER_TEMP/daily-fortune-release"
+          mkdir -p "$output"
+          git archive --format=zip --prefix="$package/" --output="$output/$package.zip" "$GITHUB_SHA"
+          (
+            cd "$output"
+            shasum -a 256 "$package.zip" > SHA256SUMS
+            shasum -a 256 -c SHA256SUMS
+          )
+          extracted=$(mktemp -d "$RUNNER_TEMP/daily-fortune-smoke.XXXXXXXX")
+          ditto -x -k "$output/$package.zip" "$extracted"
+          prefix="$extracted/install"
+          "$extracted/$package/install.sh" --prefix "$prefix"
+          test "$("$prefix/bin/今日运势" --version)" = "今日运势 $version"
+          "$extracted/$package/uninstall.sh" --prefix "$prefix"
+      - name: Publish the verified archive
+        working-directory: ${{ runner.temp }}/daily-fortune-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "daily-fortune-$GITHUB_REF_NAME.zip" SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes

@@ -1,21 +1,26 @@
 """Install/uninstall integration tests; every destination lives in TemporaryDirectory."""
+from contextlib import redirect_stdout
 import hashlib
-import re
-import shutil
+import io
 import json
 import os
 from pathlib import Path
+import shlex
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from zipfile import ZipFile
 
 from scripts import manage_install
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MANAGER = ROOT / "scripts/manage_install.py"
+MACOS_FIXTURE = ROOT / "tests/fixtures/daily-fortune-1.5.0-macos.zip"
 
 
 class InstallTests(unittest.TestCase):
@@ -30,7 +35,7 @@ class InstallTests(unittest.TestCase):
     def manage(self, action, success=True, env=None, manager=MANAGER):
         result = subprocess.run(
             [sys.executable, "-I", "-B", str(manager), action, "--prefix", str(self.prefix)],
-            text=True, capture_output=True, env=env or self.env,
+            text=True, capture_output=True, env=env or self.env, timeout=30,
         )
         self.assertEqual(result.returncode, 0 if success else 1, result.stdout + result.stderr)
         return result
@@ -47,6 +52,38 @@ class InstallTests(unittest.TestCase):
         result = subprocess.run([str(self.launcher), *arguments], capture_output=True, text=True, env=self.env)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
+
+    def install_previous_release(self):
+        old_release = self.root / "old-release"
+        with ZipFile(MACOS_FIXTURE) as archive:
+            archive.extractall(old_release)
+        self.manage("install", manager=old_release / "scripts/manage_install.py")
+        return old_release
+
+    def interrupt_after_move(self, action, count):
+        driver = """
+import os
+import sys
+from scripts import manage_install
+
+rename = manage_install.rename_exclusive
+remaining = int(sys.argv.pop(1))
+
+def interrupt(source, target):
+    global remaining
+    rename(source, target)
+    remaining -= 1
+    if remaining == 0:
+        os._exit(73)
+
+manage_install.rename_exclusive = interrupt
+raise SystemExit(manage_install.main())
+"""
+        result = subprocess.run(
+            [sys.executable, "-B", "-c", driver, str(count), action, "--prefix", str(self.prefix)],
+            cwd=ROOT, env=self.env, text=True, capture_output=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 73, result.stdout + result.stderr)
 
     def test_install_run_uninstall_and_reinstall_preserves_identity(self):
         installed = subprocess.run(
@@ -81,17 +118,9 @@ class InstallTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "darwin", "更新器使用 macOS 排他改名")
     def test_update_preserves_launcher_and_state_and_keeps_old_program(self):
-        old_release = self.root / "old-release"
-        shutil.copytree(ROOT / "daily_fortune", old_release / "daily_fortune", ignore=shutil.ignore_patterns("__pycache__"))
-        shutil.copy2(ROOT / "main.py", old_release / "main.py")
-        old_manager = old_release / "scripts/manage_install.py"
-        old_manager.parent.mkdir()
-        shutil.copy2(MANAGER, old_manager)
+        old_release = self.install_previous_release()
         old_package = old_release / "daily_fortune/__init__.py"
-        old_package.write_text(re.sub(r'^__version__ = .*$', '__version__ = "1.4.0"', old_package.read_text(),
-                                      count=1, flags=re.MULTILINE))
-        self.manage("install", manager=old_manager)
-        self.assertEqual(self.run_installed("--version").strip(), "今日运势 1.4.0")
+        self.assertEqual(self.run_installed("--version").strip(), "今日运势 1.5.0")
         self.run_installed("--date", "2026-11-08", "--plain")
         state = self.base / "state"
         marker = state / "drawn-2026-11-08"
@@ -109,7 +138,7 @@ class InstallTests(unittest.TestCase):
         expected = subprocess.check_output(
             [sys.executable, "-I", "-B", str(ROOT / "main.py"), "--version"], env=self.env, text=True,
         )
-        self.assertNotEqual(expected.strip(), "今日运势 1.4.0")
+        self.assertNotEqual(expected.strip(), "今日运势 1.5.0")
         self.assertEqual(self.run_installed("--version"), expected)
         self.assertEqual((self.launcher.stat().st_ino, self.launcher.read_bytes()), old_launcher)
         self.assertEqual((state / "user-id").read_bytes(), old_identity)
@@ -131,7 +160,7 @@ class InstallTests(unittest.TestCase):
         rename = manage_install.rename_exclusive
 
         def fail_publishing_receipt(source, target):
-            if source.parent.name.startswith(".daily-fortune-update-") and target == self.base / "receipt.json":
+            if source.parent.name == "new" and target == self.base / "receipt.json":
                 raise OSError("测试更新中断")
             rename(source, target)
 
@@ -142,6 +171,106 @@ class InstallTests(unittest.TestCase):
         self.assertEqual((self.base / "receipt.json").read_bytes(), old_receipt)
         self.assertIn("今日运势", self.run_installed("--version"))
         self.assertEqual(list(self.base.parent.glob("daily-fortune-backup-*")), [])
+        self.manage("uninstall")
+
+    @unittest.skipUnless(sys.platform == "darwin", "更新器使用 macOS 排他改名")
+    def test_update_recovers_after_process_termination(self):
+        for move in (2, 5):
+            with self.subTest(move=move):
+                self.prefix = self.root / f"interrupted-{move}"
+                self.install_previous_release()
+                self.run_installed("--plain")
+                state = {path.name: path.read_bytes() for path in (self.base / "state").iterdir()}
+                self.interrupt_after_move("update", move)
+                pending = self.base / manage_install.TRANSACTION
+                self.assertTrue((pending / "app/main.py").is_file())
+                if move == 2:
+                    self.assertFalse((self.base / "app").exists())
+                else:
+                    # Interrupt recovery itself after moving the new receipt aside.
+                    self.interrupt_after_move("update", 1)
+                    self.assertFalse((self.base / "receipt.json").exists())
+                result = self.manage("update")
+                self.assertIn("已恢复上次未完成", result.stdout)
+                self.assertFalse(pending.exists())
+                self.assertEqual({path.name: path.read_bytes() for path in (self.base / "state").iterdir()}, state)
+                self.assertNotIn("1.5.0", self.run_installed("--version"))
+                self.assertIn("此卦本座已断", self.run_installed())
+
+    @unittest.skipUnless(sys.platform == "darwin", "更新器使用 macOS 排他改名")
+    def test_update_can_replace_a_missing_interpreter(self):
+        old_python = self.root / "old-python"
+        old_python.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n', encoding="utf-8")
+        old_python.chmod(0o755)
+        launcher_bytes = manage_install.launcher_bytes
+
+        def bind_old_python(prefix):
+            with patch.object(sys, "executable", str(old_python)):
+                return launcher_bytes(prefix)
+
+        with patch.object(manage_install, "launcher_bytes", side_effect=bind_old_python), \
+                patch.dict(os.environ, self.env, clear=True), redirect_stdout(io.StringIO()):
+            manage_install.install(self.prefix.resolve())
+        old_launcher = self.launcher.read_bytes()
+        self.assertIn(str(old_python.resolve()), old_launcher.decode())
+        self.run_installed("--plain")
+        old_python.rename(self.root / "moved-python")
+        result = self.manage("update", success=False, env=dict(self.env, PYTHON=""))
+        self.assertIn("原 Python 解释器已不可用", result.stderr)
+        result = self.manage("update")
+        self.assertIn("更新完成", result.stdout)
+        self.assertNotEqual(self.launcher.read_bytes(), old_launcher)
+        (backup,) = self.base.parent.glob("daily-fortune-backup-*")
+        self.assertEqual((backup / "bin/今日运势").read_bytes(), old_launcher)
+        self.assertIn("此卦本座已断", self.run_installed())
+
+    def test_install_rejects_missing_and_unrunnable_payloads(self):
+        source = self.root / "incomplete-source"
+        shutil.copytree(ROOT / "daily_fortune", source / "daily_fortune",
+                        ignore=shutil.ignore_patterns("cli.py", "__pycache__"))
+        shutil.copy2(ROOT / "main.py", source / "main.py")
+        manager = source / "scripts/manage_install.py"
+        manager.parent.mkdir()
+        shutil.copy2(MANAGER, manager)
+        result = self.manage("install", success=False, manager=manager)
+        self.assertIn("daily_fortune/cli.py", result.stderr)
+        self.assertFalse(self.prefix.exists())
+
+        (source / "daily_fortune/cli.py").write_text("raise SystemExit('broken CLI fixture')\n", encoding="utf-8")
+        result = self.manage("install", success=False, manager=manager)
+        self.assertIn("broken CLI fixture", result.stderr)
+        self.assertFalse(self.launcher.exists())
+        self.assertFalse((self.base / "receipt.json").exists())
+        self.assertFalse((self.base / "app").exists())
+
+    def test_uninstall_refuses_immutable_launcher_before_mutation(self):
+        if sys.platform != "darwin":
+            self.skipTest("需要 macOS 不可变文件标志")
+        self.manage("install")
+        receipt = self.base / "receipt.json"
+        recorded = json.loads(receipt.read_text())["files"]
+        before = {path: (self.prefix / path).read_bytes() for path in recorded}
+        os.chflags(self.launcher, stat.UF_IMMUTABLE)
+        try:
+            refused = self.manage("uninstall", success=False)
+            self.assertIn("不可变", refused.stderr)
+            self.assertTrue(receipt.exists())
+            self.assertEqual({path: (self.prefix / path).read_bytes() for path in recorded}, before)
+        finally:
+            os.chflags(self.launcher, 0)
+        self.manage("uninstall")
+
+    @unittest.skipUnless(sys.platform == "darwin", "更新器使用 macOS 排他改名")
+    def test_uninstall_recovers_after_process_termination(self):
+        self.manage("install")
+        self.run_installed("--plain")
+        receipt = (self.base / "receipt.json").read_bytes()
+        self.interrupt_after_move("uninstall", 3)
+        self.assertFalse(self.launcher.exists())
+        self.assertEqual((self.base / "receipt.json").read_bytes(), receipt)
+        self.assertIn("已恢复上次未完成", self.manage("update").stdout)
+        self.assertEqual((self.base / "receipt.json").read_bytes(), receipt)
+        self.assertIn("此卦本座已断", self.run_installed())
         self.manage("uninstall")
 
     def test_existing_command_file_is_never_overwritten(self):

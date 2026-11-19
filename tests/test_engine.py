@@ -1,13 +1,12 @@
-from dataclasses import asdict
-from datetime import date, timedelta
 import hashlib
 import json
 import unittest
+from dataclasses import asdict
+from datetime import date, timedelta
 
 from daily_fortune import ALGORITHM_VERSION
-from daily_fortune.content import DOMAINS, DOMAIN_TEXT, ACTIONS, CAUTIONS, THEMES
+from daily_fortune.content import ACTIONS, CAUTIONS, DOMAIN_TEXT, DOMAINS, THEMES
 from daily_fortune.engine import Stream, band, digest, generate, grade_for, rotation
-
 
 USER = "0123456789abcdef0123456789abcdef"
 DAY = date(2026, 11, 8)

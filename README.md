@@ -2,7 +2,7 @@
 
 在 Windows 或 macOS 终端每天抽一张中文短签，看看财运、桃花运、事业运，以及当天的符卡和点评。还可以展开详卦、领取一个小任务，或让程序替你在两个日常选项中挑一个。运行时完全离线，只用 Python 标准库。
 
-**1.6.0 新增 Windows 命令行支持。** [Windows 安装](#windowspowershell) · [macOS 安装](#macos) · [下载 main 分支源码 ZIP](https://github.com/9178osage/daily-fortune/archive/refs/heads/main.zip)
+**1.6.0 新增 Windows 命令行支持。** [Windows 安装](#windowspowershell) · [macOS 安装](#macos) · [下载最新发布包](https://github.com/9178osage/daily-fortune/releases/latest)
 
 ```text
 穷观阵已启，本座观得艮象 (｡･ω･｡)（仅供娱乐）
@@ -66,6 +66,31 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 如果希望新终端也能找到命令，将上面的 `export` 行加入 `~/.zshrc`。程序副本安装在 `~/.local/share/daily-fortune/app/`，可独立于源码目录运行。
+
+## 下载与校验
+
+优先从 [GitHub Releases](https://github.com/9178osage/daily-fortune/releases/latest) 下载带版本号的源码 ZIP，不要只下载未固定版本的分支快照。发布页同时提供 `SHA256SUMS.txt`。
+
+macOS 或 Linux 下载后，用校验和文件核对：
+
+```sh
+shasum -a 256 -c SHA256SUMS.txt
+```
+
+Windows PowerShell 可用：
+
+```powershell
+Get-FileHash .\daily-fortune-版本号.zip -Algorithm SHA256
+```
+
+若下载中断，需要从维护脚本继续下载并校验：
+
+```sh
+python3 scripts/download_release.py "发布包 URL" "daily-fortune-版本号.zip" \
+  --sha256 "校验和文件中的 64 位 SHA-256"
+```
+
+脚本会保留 `.part` 临时文件，下次运行相同 URL 和目标文件时继续传输；校验失败不会替换已存在的目标文件。源码 ZIP 解压后仍可按上面的 Windows 或 macOS 安装说明操作。
 
 ## 怎么玩
 
@@ -185,3 +210,19 @@ py -3 -B -m unittest -v tests.test_engine tests.test_cli tests.test_windows
 - [设计调研与来源](docs/RESEARCH.md)
 - [历史测试记录与环境](docs/TESTING.md)
 - [Windows 与 macOS 自动化测试](https://github.com/9178osage/daily-fortune/actions/workflows/tests.yml)
+
+开发前可安装独立的质量工具，再运行与 CI 相同的检查：
+
+```sh
+python3 -m pip install -r requirements-dev.txt
+python3 -B -m compileall -q main.py daily_fortune scripts tests
+ruff check main.py daily_fortune scripts tests
+mypy main.py daily_fortune scripts/manage_install.py scripts/build_release.py scripts/verify_release.py scripts/download_release.py
+```
+
+创建标签发布时运行：
+
+```sh
+python3 scripts/build_release.py v1.6.0
+python3 scripts/verify_release.py dist/daily-fortune-1.6.0.zip
+```

@@ -1,13 +1,12 @@
-from concurrent.futures import ThreadPoolExecutor
-from datetime import date
 import errno
 import os
-from pathlib import Path
-import socket
 import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date
+from pathlib import Path
 from unittest.mock import patch
 
 if os.name != "nt":
@@ -19,10 +18,11 @@ if os.name != "nt":
 from daily_fortune.draw_memory import DrawMemoryError, daily_draw
 from daily_fortune.engine import generate
 from daily_fortune.identity import IdentityError, load_identity, state_directory
-from daily_fortune.render import ANSI, clusters, display_width, render, wrap
+from daily_fortune.render import clusters, display_width, render, wrap
 
 ROOT = Path(__file__).resolve().parents[1]
 USER = "0123456789abcdef0123456789abcdef"
+DAY = date(2026, 11, 8)
 
 
 class CliTests(unittest.TestCase):
@@ -150,6 +150,18 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("★", result.stdout)
         self.assertNotIn("\x1b", self.run_cli().stdout)
 
+    def test_full_report_uses_generated_fields(self):
+        self.state.mkdir(parents=True)
+        self.state.chmod(0o700)
+        (self.state / "user-id").write_text(USER + "\n", encoding="ascii")
+        (self.state / "user-id").chmod(0o600)
+        report = generate(DAY, USER)
+        result = self.run_cli("--full", "--date", DAY.isoformat(), "--plain")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        normalized_output = "".join(result.stdout.split())
+        for field in (report.meaning, report.interpretation, report.message, report.weekday_note):
+            self.assertIn("".join(field.split()), normalized_output)
+
     @unittest.skipIf(os.name == "nt", "需要 POSIX 伪终端")
     def test_interactive_followup_menu(self):
         def run_terminal(keys, *args, width=76):
@@ -247,6 +259,7 @@ class CliTests(unittest.TestCase):
     def test_zero_terminal_columns_use_readable_fallback(self):
         import contextlib
         import io
+
         from daily_fortune.cli import main
 
         with patch.dict(os.environ, self.env), \
@@ -256,9 +269,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(output.getvalue().splitlines()), 7)
 
     def test_offline_execution_with_network_functions_blocked(self):
-        from daily_fortune.cli import main
         import contextlib
         import io
+
+        from daily_fortune.cli import main
         with patch.dict(os.environ, self.env), patch("socket.socket", side_effect=AssertionError("network forbidden")), \
                 patch("socket.create_connection", side_effect=AssertionError("network forbidden")), \
                 contextlib.redirect_stdout(io.StringIO()) as output:
@@ -281,6 +295,27 @@ class CliTests(unittest.TestCase):
         result = self.run_cli()
         self.assertEqual(result.returncode, 1)
         self.assertNotIn("Traceback", result.stderr)
+
+    @unittest.skipIf(os.name == "nt", "需要 POSIX 文件权限")
+    def test_state_and_marker_reject_group_or_world_permissions(self):
+        self.state.mkdir(mode=0o700)
+        key = self.state / "user-id"
+        key.write_text(USER + "\n", encoding="ascii")
+        key.chmod(0o644)
+        with self.assertRaisesRegex(IdentityError, "权限过宽"):
+            load_identity(self.state)
+
+        key.chmod(0o600)
+        day = date(2026, 11, 8)
+        marker = self.state / f"drawn-{day.isoformat()}"
+        marker.write_bytes(b"")
+        marker.chmod(0o644)
+        with self.assertRaisesRegex(DrawMemoryError, "权限过宽"), daily_draw(self.state, day):
+            self.fail("loose-permission marker was opened")
+
+        self.state.chmod(0o755)
+        with self.assertRaisesRegex(IdentityError, "权限过宽"):
+            load_identity(self.state)
 
     @unittest.skipUnless(os.name == "nt", "需要 Windows 用户目录")
     def test_windows_state_directory(self):
@@ -334,9 +369,8 @@ class CliTests(unittest.TestCase):
 
         day = date(2026, 11, 8)
         (self.state / f"drawn-{day.isoformat()}").symlink_to(target)
-        with self.assertRaises(DrawMemoryError):
-            with daily_draw(self.state, day):
-                self.fail("state symlink was opened")
+        with self.assertRaises(DrawMemoryError), daily_draw(self.state, day):
+            self.fail("state symlink was opened")
         self.assertEqual(target.read_bytes(), (USER + "\n").encode("ascii"))
 
 

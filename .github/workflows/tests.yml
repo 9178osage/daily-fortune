@@ -8,6 +8,24 @@ permissions:
   contents: read
 
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Install quality tools
+        run: python -m pip install -r requirements-dev.txt
+      - name: Compile
+        run: python -B -m compileall -q main.py daily_fortune scripts tests
+      - name: Ruff
+        run: ruff check main.py daily_fortune scripts tests
+      - name: Mypy
+        run: mypy main.py daily_fortune scripts/manage_install.py scripts/build_release.py scripts/verify_release.py scripts/download_release.py
+
   test:
     runs-on: ${{ matrix.os }}
     strategy:

@@ -1,16 +1,15 @@
 """Exercise the documented Windows PowerShell and cmd entry points."""
 
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 from daily_fortune import __version__
-
 
 ROOT = Path(__file__).resolve().parents[1]
 PREVIEW_ARGS = ("--date", "2026-11-08", "--plain")

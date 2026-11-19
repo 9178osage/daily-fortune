@@ -1,18 +1,17 @@
 """Install/uninstall integration tests; every destination lives in TemporaryDirectory."""
 import hashlib
-import re
-import shutil
 import json
 import os
-from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from scripts import manage_install
-
 
 ROOT = Path(__file__).resolve().parents[1]
 MANAGER = ROOT / "scripts/manage_install.py"
@@ -136,9 +135,9 @@ class InstallTests(unittest.TestCase):
             rename(source, target)
 
         with patch.object(manage_install, "application_payloads", return_value=payloads), \
-                patch.object(manage_install, "rename_exclusive", side_effect=fail_publishing_receipt):
-            with self.assertRaisesRegex(manage_install.InstallError, "已恢复原版本"):
-                manage_install.update(self.prefix)
+                patch.object(manage_install, "rename_exclusive", side_effect=fail_publishing_receipt), \
+                self.assertRaisesRegex(manage_install.InstallError, "已恢复原版本"):
+            manage_install.update(self.prefix)
         self.assertEqual((self.base / "receipt.json").read_bytes(), old_receipt)
         self.assertIn("今日运势", self.run_installed("--version"))
         self.assertEqual(list(self.base.parent.glob("daily-fortune-backup-*")), [])

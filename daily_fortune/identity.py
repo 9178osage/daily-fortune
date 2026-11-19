@@ -1,11 +1,11 @@
 """Store a private, anonymous installation identifier without device inspection."""
 
 import os
-from pathlib import Path
 import re
 import secrets
 import stat
 import tempfile
+from pathlib import Path
 
 if os.name == "nt":
     from ._windows import open_state_file
@@ -39,9 +39,12 @@ def load_identity(directory=None):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         info = directory.lstat()
         if not stat.S_ISDIR(info.st_mode) or (
-            os.name == "nt" and info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            os.name == "nt" and getattr(info, "st_file_attributes", 0) & getattr(
+                stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
         ):
             raise IdentityError("状态目录不能是符号链接，且必须是目录。")
+        if os.name != "nt" and stat.S_IMODE(info.st_mode) & 0o077:
+            raise IdentityError("状态目录权限过宽，请将其设置为仅当前用户可访问（0700）。")
         if not target.exists() and not target.is_symlink():
             fd, temporary = tempfile.mkstemp(prefix=".identity-", dir=str(directory))
             try:
@@ -66,6 +69,8 @@ def load_identity(directory=None):
         with os.fdopen(fd, "rb") as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                 raise IdentityError("匿名标识必须是普通文件。")
+            if os.name != "nt" and stat.S_IMODE(os.fstat(stream.fileno()).st_mode) & 0o077:
+                raise IdentityError("匿名标识权限过宽，请将其设置为仅当前用户可访问（0600）。")
             value = stream.read(100)
         if not re.fullmatch(rb"[0-9a-f]{32}\n?", value):
             raise IdentityError("匿名标识文件格式异常；请保留原文件并检查，程序不会自动重置它。")

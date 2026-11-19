@@ -1,19 +1,32 @@
 """Versioned, domain-separated deterministic generation. No network or hash()."""
 
-from dataclasses import dataclass
-from datetime import date
 import hashlib
 import json
+from dataclasses import dataclass
+from datetime import date
+from typing import Sequence, TypeVar, cast
 
 from . import ALGORITHM_VERSION
-from .content import (DOMAINS, LABELS, DOMAIN_TEXT, THEMES, ACTIONS, CAUTIONS,
-                      GRADE_INFO, OPENINGS, CLOSINGS, WEEKDAY_NOTES)
+from .content import (
+    ACTIONS,
+    CAUTIONS,
+    CLOSINGS,
+    DOMAIN_TEXT,
+    DOMAINS,
+    GRADE_INFO,
+    LABELS,
+    OPENINGS,
+    THEMES,
+    WEEKDAY_NOTES,
+)
 
 DIGEST_RANGE = 1 << 256
 AXIS_FOR = {
     "study": "focus", "career": "focus", "wealth": "order",
     "social": "connection", "love": "connection", "vitality": "energy",
 }
+
+T = TypeVar("T")
 
 
 def digest(*parts):
@@ -39,11 +52,11 @@ class Stream:
             if value < limit:
                 return value % bound
 
-    def choose(self, items):
+    def choose(self, items: Sequence[T]) -> T:
         return items[self.below(len(items))]
 
 
-def rotation(user_id, day, field, items):
+def rotation(user_id, day, field, items: Sequence[T]) -> T:
     """A shuffled calendar deck. Query order is irrelevant; no history is stored.
 
     For n >= 3 every n-day block is a permutation. Swapping only the first two
@@ -146,7 +159,7 @@ def generate(day, user_id):
     def rng(field):
         return Stream(user_id, stamp, field)
 
-    def text(field, items):
+    def text(field, items: Sequence[T]) -> T:
         return rotation(user_id, day, field, items)
 
     values = daily_ratings(day, user_id)
@@ -171,7 +184,7 @@ def generate(day, user_id):
         action, reason = text("avoid." + key, CAUTIONS[key])
         avoid.append(Activity(key, action, reason, level))
     grade = grade_for(total)
-    image, poem = text("image." + strongest, theme["images"])
+    image, poem = cast(tuple[str, str], text("image." + strongest, theme["images"]))
     # Use a distinct opening from the overview, while keeping a stable pool.
     opening_pool = OPENINGS[band(overall)]
     opening = text("message.open." + band(overall), opening_pool)
@@ -184,13 +197,13 @@ def generate(day, user_id):
         LABELS[weakest], weak_caution.name, weak_caution.reason,
         text("message.close", CLOSINGS))
     return Report(
-        day, tuple(scores), strongest, weakest, theme["name"],
+        day, tuple(scores), strongest, weakest, str(theme["name"]),
         text("lucky.number", range(1, 100)),
-        text("lucky.color." + strongest, theme["colors"]),
+        cast(str, text("lucky.color." + strongest, theme["colors"])),
         text("lucky.direction", ("东", "东南", "南", "西南", "西", "西北", "北", "东北")),
-        text("lucky.keyword." + strongest, theme["keywords"]),
-        text("lucky.object." + strongest, theme["objects"]),
-        tuple(suitable), tuple(avoid), grade, GRADE_INFO[grade]["meaning"], image, poem,
+        cast(str, text("lucky.keyword." + strongest, theme["keywords"])),
+        cast(str, text("lucky.object." + strongest, theme["objects"])),
+        tuple(suitable), tuple(avoid), grade, str(GRADE_INFO[grade]["meaning"]), image, poem,
         text("slip.interpretation." + grade, GRADE_INFO[grade]["messages"]),
         message, WEEKDAY_NOTES[day.weekday()],
     )

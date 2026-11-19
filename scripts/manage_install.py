@@ -7,18 +7,18 @@ if sys.version_info < (3, 9):
     sys.exit(1)
 
 import argparse
-from contextlib import contextmanager
 import ctypes
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import shlex
 import shutil
 import stat
 import subprocess
 import tempfile
+from contextlib import contextmanager, suppress
+from pathlib import Path
 
 WINDOWS = os.name == "nt"
 if WINDOWS:
@@ -62,7 +62,8 @@ def regular(path):
 
 def reparse_point(info):
     # Windows junctions and other name substitutions need not be symlinks.
-    return bool(getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    return bool(getattr(info, "st_file_attributes", 0) & getattr(
+        stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
 
 
 def safe_parent_chain(prefix, path):
@@ -117,7 +118,7 @@ def check_base(prefix):
     safe_parent_chain(prefix, base)
     if base.exists():
         allowed = {"state", "bin", LOCK_NAME, BACKUPS} if WINDOWS else {"state"}
-        unknown = set(p.name for p in base.iterdir()) - allowed
+        unknown = {p.name for p in base.iterdir()} - allowed
         if unknown:
             raise InstallError("安装目录已有文件，拒绝覆盖：{}（{}）".format(base, "、".join(sorted(unknown))))
     state = prefix / STATE
@@ -192,7 +193,7 @@ def install(prefix):
     if exists(prefix / LAUNCHER):
         raise InstallError("命令文件已存在，拒绝覆盖：{}".format(prefix / LAUNCHER))
     payloads[LAUNCHER.as_posix()] = launcher_bytes(prefix)
-    made_dirs = []
+    made_dirs: list[Path] = []
     written = []
     try:
         make_dir(prefix, prefix / "bin", made_dirs)
@@ -216,10 +217,8 @@ def install(prefix):
             if regular(path) and digest(path.read_bytes()) == expected:
                 path.unlink()
         for path in reversed(made_dirs):
-            try:
+            with suppress(OSError):
                 path.rmdir()
-            except OSError:
-                pass
         raise
     print("安装完成：{}".format(prefix / LAUNCHER))
     if WINDOWS:
@@ -260,7 +259,7 @@ def read_receipt(prefix):
     try:
         receipt = json.loads(receipt_file.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
     except (ValueError, UnicodeError) as error:
-        raise InstallError("安装清单损坏：{}".format(error))
+        raise InstallError("安装清单损坏：{}".format(error)) from error
     if (not isinstance(receipt, dict) or set(receipt) != {"schema", "files"}
             or type(receipt["schema"]) is not int or receipt["schema"] != 1
             or not isinstance(receipt["files"], dict)):
@@ -290,7 +289,7 @@ def installation_lock(prefix):
             stream.seek(0)
             # Windows accepts locking a byte beyond EOF. Closing the handle
             # releases the lock and leaves the inode for the next process.
-            msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+            getattr(msvcrt, "locking")(stream.fileno(), getattr(msvcrt, "LK_LOCK"), 1)
             yield
         return
     fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -307,7 +306,7 @@ def check_installation(prefix, *, removing=False):
     allowed = {"app", "state", "receipt.json"}
     if WINDOWS:
         allowed.update({"bin", LOCK_NAME, BACKUPS})
-    unknown = set(p.name for p in base.iterdir()) - allowed
+    unknown = {p.name for p in base.iterdir()} - allowed
     if unknown:
         raise InstallError("安装目录含未知文件：{}".format("、".join(sorted(unknown))))
     safe_parent_chain(prefix, prefix / STATE)
@@ -472,7 +471,9 @@ def main():
     if WINDOWS:
         # Windows PowerShell and redirected output can use a legacy code page.
         for stream in (sys.stdout, sys.stderr):
-            stream.reconfigure(encoding="utf-8")
+            reconfigure = getattr(stream, "reconfigure", None)
+            if reconfigure is not None:
+                reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="今日运势的离线用户目录安装器")
     actions = {"install": ("安装", install), "uninstall": ("卸载", uninstall), "update": ("更新", update)}
     parser.add_argument("action", choices=actions)

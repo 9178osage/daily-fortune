@@ -1,14 +1,14 @@
 """Command-line interface; help/version never create state."""
 
 import argparse
-from contextlib import nullcontext
-from datetime import date
 import errno
 import os
 import re
 import shutil
 import stat
 import sys
+from contextlib import nullcontext, suppress
+from datetime import date
 
 from . import __version__
 from .compact import already_drawn, summarize
@@ -95,10 +95,8 @@ def main(argv=None):
     except (OSError, UnicodeError) as exc:
         if _output_pipe_closed(exc):
             # Prevent the interpreter's final stdout flush from emitting a traceback.
-            try:
-                sys.stdout = open(os.devnull, "w", encoding="utf-8")
-            except OSError:
-                pass
+            with suppress(OSError):
+                sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
             return 0
         print("今日运势：无法输出报告：%s" % exc, file=sys.stderr)
         return 1

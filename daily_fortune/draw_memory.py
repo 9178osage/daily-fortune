@@ -1,8 +1,8 @@
 """Remember successful daily draws across processes and restarts."""
 
-from contextlib import contextmanager
 import os
 import stat
+from contextlib import contextmanager
 
 if os.name == "nt":
     import errno
@@ -26,7 +26,7 @@ def _lock_marker(marker):
             # Windows locks a range from the current position, even for an empty file.
             while True:
                 try:
-                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    getattr(msvcrt, "locking")(fd, getattr(msvcrt, "LK_NBLCK"), 1)
                     break
                 except OSError as exc:
                     if exc.errno != errno.EACCES:
@@ -42,7 +42,7 @@ def _lock_marker(marker):
         if os.name == "nt":
             try:
                 marker.seek(0)
-                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                getattr(msvcrt, "locking")(fd, getattr(msvcrt, "LK_UNLCK"), 1)
             except OSError as exc:
                 raise DrawMemoryError(f"无法解锁今日抽签记录（{exc.strerror}）。") from exc
 
@@ -62,6 +62,8 @@ def daily_draw(directory, day):
     with os.fdopen(fd, "r+b", buffering=0) as marker:
         if not stat.S_ISREG(os.fstat(marker.fileno()).st_mode):
             raise DrawMemoryError("抽签记录必须是普通文件。")
+        if os.name != "nt" and stat.S_IMODE(os.fstat(marker.fileno()).st_mode) & 0o077:
+            raise DrawMemoryError("抽签记录权限过宽，请将其设置为仅当前用户可访问（0600）。")
         with _lock_marker(marker):
             try:
                 flag = marker.read(2)

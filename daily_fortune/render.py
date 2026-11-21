@@ -113,16 +113,16 @@ def render(report, width=76, color=False, plain=False, emoji=False):
         add()
         add("[%s]" % title if plain else "【%s】" % title, "1;36")
 
-    title = "穷观阵已启 · 本座断今日之卦"
+    title = "穷观阵启 · 本座推演今日卦势"
     if not plain:
         title = f"🔮 {title}" if emoji else f"✦ {title} ✦"
     add(title, "1;35")
     add("-" * width if plain else "─" * width, "2")
     weekday = "一二三四五六日"[report.day.weekday()]
-    add("日期：%s  星期%s" % (report.day.isoformat(), weekday))
-    add(f"阵中所见：{report.theme} · {report.keyword}", "33")
+    add("推演日期：%s  星期%s" % (report.day.isoformat(), weekday))
+    add(f"主象线索：{report.theme} · {report.keyword}", "33")
 
-    section("今日总览")
+    section("卦盘总览")
     label_width = max(display_width(LABELS[s.key]) for s in report.scores)
     for score in report.scores:
         label = LABELS[score.key]
@@ -134,31 +134,31 @@ def render(report, width=76, color=False, plain=False, emoji=False):
             add(label + "：" + stars)
         add(score.note, indent="  ")
 
-    section("幸运元素")
+    section("今日兆象")
     for label, value in (("幸运数字", report.number), ("幸运颜色", report.color),
                          ("幸运方位", report.direction), ("幸运关键词", report.keyword),
                          ("幸运物品", report.object)):
         add("%s：%s" % (label, value))
 
     section("赛博黄历")
-    add("宜", "1;32")
+    add("宜行", "1;32")
     for activity in report.suitable:
         add(f"- {activity.name}：{activity.reason}")
-    add("不宜", "1;33")
+    add("暂忌", "1;33")
     for activity in report.avoid:
         add(f"- {activity.name}：{activity.reason}")
 
-    section("今日签文")
+    section("卦签解读")
     add(f"卦断：{report.grade}", "1;35")
     add(f"签义：{report.meaning}")
     add("意象：%s" % report.image)
     add(report.poem, indent="  ")
     add(f"解签：{report.interpretation}")
 
-    section("今日寄语")
+    section("太卜寄语")
     add(report.message)
     add(report.weekday_note)
     add()
-    add("仅供娱乐。评分为生成值，不预测未来。", "2")
-    add("赛博黄历与签文均为原创生活提示。", "2")
+    add("仅供娱乐。分数与兆象不预测未来，现实信息始终优先。", "2")
+    add("投资、医疗、法律及重大关系决定，请以专业意见和本人判断为准。", "2")
     return "\n".join(output) + "\n"

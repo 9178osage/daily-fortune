@@ -180,8 +180,9 @@ def generate(day, user_id):
     if opening == scores[0].note:
         opening = opening_pool[(opening_pool.index(opening) + 1) % len(opening_pool)]
     strong_action, weak_caution = suitable[0], avoid[1]
-    focus_word = "各项接近，今天不必分出输赢" if len(set(values.values())) == 1 else "把%s当作今天的着力点" % LABELS[strongest]
-    message = "%s%s，可以%s：%s。留意%s，忌%s：%s。%s" % (
+    focus_word = ("诸元分势相近，不必强分主次" if len(set(values.values())) == 1
+                  else "此卦主线落在%s" % LABELS[strongest])
+    message = "%s%s，宜%s：%s。次要波动在%s，暂忌%s：%s。%s" % (
         opening, focus_word, strong_action.name, strong_action.reason,
         LABELS[weakest], weak_caution.name, weak_caution.reason,
         text("message.close", CLOSINGS))

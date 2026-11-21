@@ -54,13 +54,13 @@ def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
-    parser = Parser(prog="今日运势", description="每天抽一张中文娱乐短签，抽签记录保存在本机。",
-                    epilog="每日次数按系统本地日期计算。终端直接运行时可在签后选择小菜单，按回车离开。",
+    parser = Parser(prog="今日运势", description="每天生成一张原创中文娱乐卦签，抽签记录只保存在本机。",
+                    epilog="每日次数按系统本地日期计算。终端直接运行时可在签后选择小菜单，按回车收阵。",
                     add_help=False)
     parser.add_argument("--help", "-h", action="help", help="显示帮助并退出")
     parser.add_argument("--version", action="version", version="今日运势 " + __version__, help="显示版本并退出")
     parser.add_argument("--plain", action="store_true", help="用数字显示星级，关闭 ANSI、Emoji 和签后菜单")
-    parser.add_argument("--full", action="store_true", help="查看七项星级、黄历和寄语的详细报告")
+    parser.add_argument("--full", action="store_true", help="查看七项卦势、行止清单和太卜寄语")
     parser.add_argument("--date", type=parse_date, metavar="YYYY-MM-DD", help="查看指定日期的模拟运势")
     args = parser.parse_args(argv)
     try:

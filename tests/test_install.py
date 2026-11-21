@@ -58,14 +58,14 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(installed.returncode, 0, installed.stderr)
         self.assertTrue(os.access(self.launcher, os.X_OK))
         output = self.run_installed("--date", "2026-11-08", "--plain")
-        self.assertIn("穷观阵已启", output)
+        self.assertIn("穷观阵推演已毕", output)
         self.assertIn("符卡：", output)
         self.assertIn("2026-11-08", self.run_installed("--full", "--date", "2026-11-08"))
         self.assertEqual(output, self.run_installed("--date", "2026-11-08", "--plain"))
         state = self.base / "state/user-id"
         identity = state.read_bytes()
         self.assertIn("符卡：", self.run_installed())
-        self.assertIn("此卦本座已断", self.run_installed())
+        self.assertIn("同日诸元未变", self.run_installed())
         # Uninstall must leave the anonymous identity and draw history untouched.
         uninstalled = subprocess.run(
             ["/bin/sh", str(ROOT / "uninstall.sh"), "--prefix", str(self.prefix)],
@@ -77,7 +77,7 @@ class InstallTests(unittest.TestCase):
         self.assertFalse((self.base / "receipt.json").exists())
         self.assertEqual(state.read_bytes(), identity)
         self.manage("install")
-        self.assertIn("此卦本座已断", self.run_installed())
+        self.assertIn("同日诸元未变", self.run_installed())
         self.assertEqual(output, self.run_installed("--date", "2026-11-08", "--plain"))
         self.manage("uninstall")
 

@@ -93,12 +93,12 @@ class CliTests(unittest.TestCase):
                                         env=dict(self.env, TZ=first_zone), text=True).strip()
         preview = self.run_cli("--date", today, TZ=first_zone)
         self.assertIn("符卡：", preview.stdout)
-        self.assertIn("今日总览", self.run_cli("--full", TZ=first_zone).stdout)
+        self.assertIn("卦盘总览", self.run_cli("--full", TZ=first_zone).stdout)
         first = self.run_cli(TZ=first_zone)
         self.assertEqual(first.stdout, preview.stdout)
         repeat = self.run_cli("--plain", TZ=first_zone)
         self.assertEqual(repeat.returncode, 0)
-        self.assertTrue(repeat.stdout.startswith("此卦本座已断。哼，同日无须再问 ("))
+        self.assertTrue(repeat.stdout.startswith("同日诸元未变，前卦仍可用 ("))
         self.assertNotIn("符卡：", repeat.stdout)
         self.assertEqual(self.run_cli("--date", today, TZ=first_zone).stdout, preview.stdout)
 
@@ -107,14 +107,14 @@ class CliTests(unittest.TestCase):
         first = self.run_cli(TZ="Pacific/Kiritimati")
         self.assertIn("符卡：", first.stdout)
         self.assertIn("符卡：", self.run_cli(TZ="Etc/GMT+12").stdout)
-        self.assertIn("此卦本座已断", self.run_cli(TZ="Pacific/Kiritimati").stdout)
+        self.assertIn("同日诸元未变", self.run_cli(TZ="Pacific/Kiritimati").stdout)
 
     def test_concurrent_daily_draw_only_prints_one_card(self):
         with ThreadPoolExecutor(max_workers=8) as executor:
             results = list(executor.map(lambda _: self.run_cli(), range(8)))
         self.assertTrue(all(result.returncode == 0 for result in results))
         self.assertEqual(sum("符卡：" in result.stdout for result in results), 1)
-        self.assertEqual(sum("此卦本座已断" in result.stdout for result in results), 7)
+        self.assertEqual(sum("同日诸元未变" in result.stdout for result in results), 7)
 
     def test_default_compact_card_and_plain(self):
         args = ("--date", "2026-11-08")
@@ -122,7 +122,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         lines = result.stdout.splitlines()
         self.assertEqual(len(lines), 7)
-        self.assertRegex(lines[0], r"^穷观阵已启，本座观得[坎艮坤巽兑离乾]象 \(")
+        self.assertRegex(lines[0], r"^穷观阵推演已毕，本座取[坎艮坤巽兑离乾]势 \(")
         self.assertNotIn("我", result.stdout)
         self.assertIn("仅供娱乐", lines[0])
         for line, label in zip(lines[1:4], ("财运", "桃花运", "事业运")):
@@ -139,12 +139,12 @@ class CliTests(unittest.TestCase):
         result = self.run_cli("--full", "--plain", isolated=False,
                               LC_ALL="C", PYTHONUTF8="0", PYTHONIOENCODING="ascii")
         self.assertEqual(result.returncode, 0, result.stderr)
-        for title in ("今日总览", "幸运元素", "赛博黄历", "今日签文", "今日寄语", "仅供娱乐"):
+        for title in ("卦盘总览", "今日兆象", "赛博黄历", "卦签解读", "太卜寄语", "仅供娱乐"):
             self.assertIn(title, result.stdout)
         self.assertNotIn("\x1b", result.stdout)
         self.assertIn("穷观阵", result.stdout)
         self.assertIn("本座", result.stdout)
-        self.assertIn("不宜", result.stdout)
+        self.assertIn("暂忌", result.stdout)
         self.assertNotIn("我", result.stdout)
         self.assertNotIn("🔮", result.stdout)
         self.assertNotIn("★", result.stdout)
@@ -212,23 +212,23 @@ class CliTests(unittest.TestCase):
 
         output = run_terminal("1\n1\n2\n3\n清茶\n糕点\n\n".encode("utf-8"))
         self.assertLess(output.index("符卡："), output.index("详卦"))
-        self.assertEqual(output.count("今日总览"), 2)
-        self.assertIn("今日小任务：", output)
-        self.assertIn("二选一", output)
-        self.assertRegex(output, r"本座抽得：(?:清茶|糕点)")
-        self.assertIn("仅供娱乐", output.split("本座抽得：", 1)[1])
+        self.assertEqual(output.count("卦盘总览"), 2)
+        self.assertIn("今日可行小事：", output)
+        self.assertIn("随机择一", output)
+        self.assertRegex(output, r"本座随机取：(?:清茶|糕点)。仅供娱乐")
+        self.assertIn("仅供娱乐", output.split("本座随机取：", 1)[1])
 
         repeat = run_terminal(b"2\n\n")
-        self.assertIn("此卦本座已断", repeat)
-        self.assertIn("今日小任务：", repeat)
+        self.assertIn("同日诸元未变", repeat)
+        self.assertIn("今日可行小事：", repeat)
         narrow = run_terminal("3\n茶\n糕\n\n".encode("utf-8"), width=12)
         self.assertRegex(narrow, r"第一项[^\r\n]*\r?\n返回）：")
         self.assertRegex(narrow, r"第二项[^\r\n]*\r?\n返回）：")
 
         for args in (("--full",), ("--date", "2026-11-08"), ("--plain",)):
             with self.subTest(args=args):
-                self.assertNotIn("二选一", run_terminal(b"", *args))
-        self.assertNotIn("二选一", self.run_cli().stdout)
+                self.assertNotIn("随机择一", run_terminal(b"", *args))
+        self.assertNotIn("随机择一", self.run_cli().stdout)
 
     @unittest.skipIf(os.name == "nt", "需要 POSIX 伪终端")
     def test_tty_ansi_emoji_and_no_color(self):
@@ -283,7 +283,7 @@ class CliTests(unittest.TestCase):
                 patch("socket.create_connection", side_effect=AssertionError("network forbidden")), \
                 contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(main(["--plain"]), 0)
-        self.assertIn("穷观阵已启", output.getvalue())
+        self.assertIn("穷观阵推演已毕", output.getvalue())
 
     def test_identity_private_atomic_and_corruption_never_resets(self):
         with ThreadPoolExecutor(max_workers=8) as pool:

@@ -104,15 +104,15 @@ class WindowsTests(unittest.TestCase):
         self.assertEqual(self.run_launcher(*PREVIEW_ARGS), source_preview)
         detailed = self.run_launcher("--full", *PREVIEW_ARGS)
         self.assertIn("赛博黄历", detailed)
-        self.assertIn("今日寄语", detailed)
+        self.assertIn("太卜寄语", detailed)
         self.assertIn("符卡：", self.run_launcher())
-        self.assertIn("此卦本座已断", self.run_launcher(source=True))
+        self.assertIn("同日诸元未变", self.run_launcher(source=True))
 
         self.manage("update")
         self.assertIn(__version__, self.run_launcher("--version"))
         self.assertEqual(identity.read_bytes(), original_identity)
         self.assertEqual(self.run_launcher(*PREVIEW_ARGS), source_preview)
-        self.assertIn("此卦本座已断", self.run_launcher())
+        self.assertIn("同日诸元未变", self.run_launcher())
 
         self.manage("uninstall")
         self.assertFalse(launcher.exists())
@@ -120,7 +120,7 @@ class WindowsTests(unittest.TestCase):
         self.assertFalse((self.installation / "receipt.json").exists())
         self.assertEqual(identity.read_bytes(), original_identity)
         self.manage("install")
-        self.assertIn("此卦本座已断", self.run_launcher())
+        self.assertIn("同日诸元未变", self.run_launcher())
 
     def test_custom_prefix_uses_its_own_state(self):
         self.installation = self.external_directory / "自定义 安装"

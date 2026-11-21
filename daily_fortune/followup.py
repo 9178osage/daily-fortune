@@ -29,7 +29,7 @@ def _read_option(prompt, width):
 def show_followups(day, identity, width, *, color=False, emoji=False):
     """Offer follow-ups after the draw has been committed and its lock released."""
     width = min(78, width)
-    options = "1 详卦  ·  2 今日小任务  ·  3 二选一  ·  回车离开"
+    options = "1 展开详卦  ·  2 领今日小事  ·  3 随机择一  ·  回车收阵"
     prompt = "\n" + "\n".join(wrap(options, width)) + "\n> "
     detailed_output = None
 
@@ -47,7 +47,7 @@ def show_followups(day, identity, width, *, color=False, emoji=False):
                 print(detailed_output, end="")
             elif selection == "2":
                 task = rotation(identity, day, "followup.task", TASKS)
-                show(f"今日小任务：{task}")
+                show(f"今日可行小事：{task}")
             elif selection == "3":
                 first = _read_option("第一项（回车返回）：", width)
                 if not first:
@@ -55,8 +55,8 @@ def show_followups(day, identity, width, *, color=False, emoji=False):
                 second = _read_option("第二项（回车返回）：", width)
                 if second:
                     chosen = secrets.choice((first, second))
-                    show(f"本座抽得：{chosen}（仅供娱乐）")
+                    show(f"本座随机取：{chosen}。仅供娱乐，决定仍在你。")
             else:
-                show("请输入 1、2 或 3，或按回车离开。")
+                show("输入 1、2 或 3；无事可按回车收阵。")
     except (EOFError, KeyboardInterrupt):
         print()

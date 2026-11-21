@@ -30,12 +30,36 @@ TIERS = ("凶", "末吉", "平", "小吉", "中吉", "大吉", "大吉")
 # Symbolic labels for the seven compact rating levels.
 TRIGRAMS = ("坎", "艮", "坤", "巽", "兑", "离", "乾")
 ADVICE = {
-    "凶": ("宜敛锋，不宜强行。", "啧，宜缓行，不宜争先。", "宜审局，不宜涉险。"),
-    "末吉": ("宜候时，不宜催逼。", "宜省察，不宜躁进。", "宜整备，不宜冒进。"),
-    "平": ("宜循序，不宜求速。", "宜守常，不宜多虑。", "宜循旧章，不宜横生枝节。"),
-    "小吉": ("宜试行，不宜贪多。", "宜小进，不宜妄动。", "宜拾微功，不宜求全。"),
-    "中吉": ("宜择要而行，不宜旁骛。", "宜先验其策，不宜省去复核。", "宜拓一途，不宜诸事并举。"),
-    "大吉": ("宜乘势而进，不宜失慎。", "宜落一子，不宜满盘皆动。", "宜展所长，不宜轻视变数。"),
+    "凶": (
+        "今势受阻，宜减项核对，不宜硬推。",
+        "宜守住必要一项，不宜与满日程硬碰。",
+        "宜查前因，不宜把趋势误作定数。",
+    ),
+    "末吉": (
+        "今势转慢，宜候反馈，不宜催成。",
+        "宜先理清手边诸元，不宜盲推下一步。",
+        "宜留出缓冲，不宜再加重变量。",
+    ),
+    "平": (
+        "诸元平稳，宜循序，不宜虚耗。",
+        "今日宜做好一件可验收的小事，不宜无序追加。",
+        "宜守住既定节奏，不宜虚造新的主线。",
+    ),
+    "小吉": (
+        "卦势有隙，宜小试，不宜铺开。",
+        "宜小幅试行，不宜一口气加码。",
+        "宜积累微功，不宜追求全胜。",
+    ),
+    "中吉": (
+        "今势偏顺，宜择要推进，不宜旁骛。",
+        "宜先定主线，不宜让副项同时上阵。",
+        "宜行一步并复核，不宜省掉退路。",
+    ),
+    "大吉": (
+        "阵势舒展，宜择一事成章，不宜分心。",
+        "宜顺势试行且每步可查可改，不宜一次铺开。",
+        "宜收束范围，不宜贪多。",
+    ),
 }
 
 
@@ -65,10 +89,10 @@ def summarize(day, identity):
     advice = rotation(identity, day, "compact.comment." + tier, ADVICE[tier])
     scores = tuple((label, values[domain]) for domain, label in DOMAINS)
     face = rotation(identity, day, "compact.opening-face", OPENING_FACES)
-    opening = f"穷观阵已启，本座观得{TRIGRAMS[stars - 1]}象 {face}（仅供娱乐）"
+    opening = f"穷观阵推演已毕，本座取{TRIGRAMS[stars - 1]}势 {face}（仅供娱乐）"
     return CompactReport(scores, card, f"{tier}。{advice}", stars, opening)
 
 
 def already_drawn(day, identity):
     face = rotation(identity, day, "compact.reminder-face", REMINDER_FACES)
-    return f"此卦本座已断。哼，同日无须再问 {face}"
+    return f"同日诸元未变，前卦仍可用 {face}（不重复抽签）"

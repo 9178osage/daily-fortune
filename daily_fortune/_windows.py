@@ -24,6 +24,9 @@ _get_console_mode.restype = wintypes.BOOL
 _set_console_mode = _kernel32.SetConsoleMode
 _set_console_mode.argtypes = (wintypes.HANDLE, wintypes.DWORD)
 _set_console_mode.restype = wintypes.BOOL
+_flush_file_buffers = _kernel32.FlushFileBuffers
+_flush_file_buffers.argtypes = (wintypes.HANDLE,)
+_flush_file_buffers.restype = wintypes.BOOL
 
 _INVALID_HANDLE = wintypes.HANDLE(-1).value
 _GENERIC_READ = 0x80000000
@@ -34,6 +37,7 @@ _FILE_SHARE_DELETE = 0x4
 _OPEN_EXISTING = 3
 _OPEN_ALWAYS = 4
 _FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+_FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
 _ENABLE_PROCESSED_OUTPUT = 0x1
 _ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x4
 
@@ -65,6 +69,22 @@ def open_state_file(path, *, writable=False):
     return fd
 
 
+def sync_directory(path):
+    handle = _create_file(
+        str(path), _GENERIC_READ | _GENERIC_WRITE,
+        _FILE_SHARE_READ | _FILE_SHARE_WRITE | _FILE_SHARE_DELETE,
+        None, _OPEN_EXISTING,
+        _FILE_FLAG_OPEN_REPARSE_POINT | _FILE_FLAG_BACKUP_SEMANTICS, None,
+    )
+    if handle == _INVALID_HANDLE:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        if not _flush_file_buffers(handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        _close_handle(handle)
+
+
 @contextmanager
 def virtual_terminal(stream):
     """Enable ANSI output for this draw when the console supports it."""
@@ -87,4 +107,5 @@ def virtual_terminal(stream):
         try:
             yield True
         finally:
-            _set_console_mode(handle, original)
+            if not _set_console_mode(handle, original):
+                raise ctypes.WinError(ctypes.get_last_error())

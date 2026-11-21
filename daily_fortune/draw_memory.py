@@ -4,6 +4,8 @@ from contextlib import contextmanager
 import os
 import stat
 
+from ._state import sync_directory
+
 if os.name == "nt":
     import errno
     import msvcrt
@@ -79,5 +81,6 @@ def daily_draw(directory, day):
                     if marker.write(b"1") != 1:
                         raise DrawMemoryError("无法保存今日抽签记录。")
                     os.fsync(marker.fileno())
+                    sync_directory(directory)
                 except OSError as exc:
                     raise DrawMemoryError(f"无法保存今日抽签记录（{exc.strerror}）。") from exc

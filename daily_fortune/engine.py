@@ -76,11 +76,13 @@ def band(stars):
 
 
 def grade_for(total):
+    if type(total) is not int or not 6 <= total <= 30:
+        raise ValueError("invalid score total")
     for ceiling, grade in ((9, "凶"), (13, "末吉"), (17, "平"),
                            (21, "小吉"), (25, "中吉"), (30, "大吉")):
         if total <= ceiling:
             return grade
-    raise ValueError("invalid score total")
+    raise AssertionError("validated score total has no grade")
 
 
 @dataclass(frozen=True)

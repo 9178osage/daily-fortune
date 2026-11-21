@@ -150,6 +150,21 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("★", result.stdout)
         self.assertNotIn("\x1b", self.run_cli().stdout)
 
+    def test_full_report_renders_generated_fields(self):
+        report = generate(date(2026, 11, 8), USER)
+        rendered = render(report, width=78, plain=True).replace("\n", "")
+        expected = (
+            *(score.note for score in report.scores),
+            report.meaning,
+            report.interpretation,
+            report.message,
+            report.weekday_note,
+            *(activity.reason for activity in report.suitable + report.avoid),
+        )
+        for text in expected:
+            with self.subTest(text=text):
+                self.assertIn(text, rendered)
+
     @unittest.skipIf(os.name == "nt", "需要 POSIX 伪终端")
     def test_interactive_followup_menu(self):
         def run_terminal(keys, *args, width=76):
@@ -217,10 +232,15 @@ class CliTests(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", "需要 POSIX 伪终端")
     def test_tty_ansi_emoji_and_no_color(self):
-        for extra, colored in (({}, True), ({"NO_COLOR": "1"}, False), ({"TERM": "dumb"}, False)):
+        for extra, colored in (
+            ({}, True),
+            ({"NO_COLOR": ""}, False),
+            ({"NO_COLOR": "1"}, False),
+            ({"TERM": "dumb"}, False),
+        ):
             master, slave = pty.openpty()
             try:
-                tty_env = dict(self.env, TERM="xterm-256color", NO_COLOR="")
+                tty_env = dict(self.env, TERM="xterm-256color")
                 tty_env.update(extra)
                 proc = subprocess.Popen([sys.executable, "-I", "-B", str(ROOT / "main.py"), "--full", "--date", "2026-11-08"],
                                         env=tty_env, stdout=slave, stderr=slave)
@@ -281,6 +301,35 @@ class CliTests(unittest.TestCase):
         result = self.run_cli()
         self.assertEqual(result.returncode, 1)
         self.assertNotIn("Traceback", result.stderr)
+
+    def test_state_directory_rejects_relative_or_unresolvable_paths(self):
+        for setting in ("relative-state", "~daily-fortune-user-that-does-not-exist/state"):
+            with self.subTest(setting=setting):
+                result = self.run_cli("--plain", DAILY_FORTUNE_HOME=setting)
+                self.assertEqual(result.returncode, 1)
+                expected_error = ("必须是绝对路径" if setting.startswith("relative")
+                                  else "无法解析")
+                self.assertIn(expected_error, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+        with self.assertRaises(IdentityError):
+            load_identity(Path("relative-state"))
+
+    @unittest.skipIf(os.name == "nt", "需要 POSIX HOME 语义")
+    def test_relative_home_is_rejected(self):
+        with patch.dict(os.environ, {"HOME": "relative-home"}, clear=True):
+            with self.assertRaises(IdentityError):
+                state_directory()
+
+    def test_state_directory_is_synced_when_files_are_published(self):
+        with patch("daily_fortune.identity.sync_directory") as sync:
+            load_identity(self.state)
+            sync.assert_called_once_with(self.state)
+
+        day = date(2026, 11, 8)
+        with patch("daily_fortune.draw_memory.sync_directory") as sync:
+            with daily_draw(self.state, day):
+                pass
+            sync.assert_called_once_with(self.state)
 
     @unittest.skipUnless(os.name == "nt", "需要 Windows 用户目录")
     def test_windows_state_directory(self):

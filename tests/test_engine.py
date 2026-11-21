@@ -99,6 +99,14 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(generate(date.min, USER).day, date.min)
         self.assertEqual(generate(date.max, USER).day, date.max)
 
+    def test_grade_rejects_scores_outside_the_contract(self):
+        for invalid in (-1, 0, 5, 31, 6.5, True):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    grade_for(invalid)
+        self.assertEqual(grade_for(6), "凶")
+        self.assertEqual(grade_for(30), "大吉")
+
     def test_content_coverage_and_original_structure(self):
         for key in DOMAINS:
             for level in ("low", "mid", "high"):

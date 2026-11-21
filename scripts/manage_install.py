@@ -109,7 +109,10 @@ def write_new(path, content, mode):
 
 def prefix_path(value):
     # Canonicalize the user-chosen root once; receipt paths stay strictly relative.
-    return Path(value).expanduser().resolve()
+    try:
+        return Path(value).expanduser().resolve()
+    except (OSError, RuntimeError) as error:
+        raise InstallError("无法解析安装根目录：{}".format(error)) from error
 
 
 def check_base(prefix):
@@ -279,10 +282,10 @@ def read_receipt(prefix):
 @contextmanager
 def installation_lock(prefix):
     base = prefix / BASE
-    safe_parent_chain(prefix, base)
-    if not base.is_dir():
-        raise InstallError("没有找到安装目录，请先执行 {}：{}".format(INSTALL_SCRIPT, base))
     if WINDOWS:
+        safe_parent_chain(prefix, base)
+        if not base.is_dir():
+            raise InstallError("没有找到安装目录，请先执行 {}：{}".format(INSTALL_SCRIPT, base))
         lock = base / LOCK_NAME
         if exists(lock) and not regular(lock):
             raise InstallError("安装锁不是普通文件：{}".format(lock))
@@ -293,7 +296,10 @@ def installation_lock(prefix):
             msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
             yield
         return
-    fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    # Lock one stable directory for all operations. Using prefix would allow a
+    # first installer to change the lock inode while a waiter is queued.
+    lock_directory = Path(prefix.anchor)
+    fd = os.open(lock_directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield
@@ -345,24 +351,43 @@ def check_installation(prefix, *, removing=False):
 
 def uninstall(prefix):
     files = check_installation(prefix, removing=True)
-    for relative, expected in files.items():
-        if relative == LAUNCHER.as_posix():
-            continue
-        path = prefix / relative
-        # A second check also catches common concurrent edits during removal.
-        if not regular(path) or digest(path.read_bytes()) != expected:
-            raise InstallError("卸载期间文件发生变化，已停止：{}".format(path))
-        path.unlink()
-    (prefix / APP / "daily_fortune").rmdir()
-    (prefix / APP).rmdir()
-    (prefix / RECEIPT).unlink()
-    # Keep the command until the application and receipt have been removed.
-    # Preflight cannot make this multi-file operation atomic against concurrent
-    # edits, chmod, ACL or filesystem-flag changes; do not run concurrent installers.
+    base = prefix / BASE
+    receipt = prefix / RECEIPT
     launcher = prefix / LAUNCHER
-    if not regular(launcher) or digest(launcher.read_bytes()) != files[LAUNCHER.as_posix()]:
-        raise InstallError("卸载期间启动器发生变化，已保留：{}".format(launcher))
-    launcher.unlink()
+    receipt_snapshot = receipt.read_bytes()
+    transaction = Path(tempfile.mkdtemp(prefix=".daily-fortune-uninstall-", dir=base))
+    moves = (
+        (prefix / APP, transaction / APP.name),
+        (receipt, transaction / RECEIPT.name),
+        (launcher, transaction / "launcher"),
+    )
+    moved = []
+    try:
+        for source, target in moves:
+            if source == launcher:
+                if not regular(source) or digest(source.read_bytes()) != files[LAUNCHER.as_posix()]:
+                    raise InstallError("卸载期间启动器发生变化，已停止：{}".format(source))
+            rename_exclusive(source, target)
+            moved.append((source, target))
+        check_staged_uninstall(transaction, files, receipt_snapshot)
+    except (OSError, InstallError, KeyboardInterrupt) as error:
+        try:
+            for source, target in reversed(moved):
+                if exists(target) and not exists(source):
+                    rename_exclusive(target, source)
+            transaction.rmdir()
+            if check_installation(prefix) != files:
+                raise InstallError("恢复后的安装清单校验失败。")
+        except (OSError, InstallError, KeyboardInterrupt) as rollback_error:
+            raise InstallError(
+                "卸载中断，无法自动恢复：{}。请检查暂存目录：{}".format(rollback_error, transaction)
+            ) from error
+        raise InstallError("{}。已恢复原安装。".format(error or "卸载被中断")) from error
+
+    try:
+        shutil.rmtree(transaction)
+    except OSError as error:
+        raise InstallError("卸载已完成，但无法清理暂存目录：{}（{}）。".format(transaction, error)) from error
     print("卸载完成。已保留用户数据：{}".format(prefix / STATE))
     print("保留该目录可在重新安装后延续同一用户的每日结果；本工具不会自动删除它。")
 
@@ -380,6 +405,34 @@ def rename_exclusive(source, target):
     if rename(os.fsencode(source), os.fsencode(target), 0x00000004) != 0:
         error = ctypes.get_errno()
         raise OSError(error, os.strerror(error), str(source), None, str(target))
+
+
+def check_staged_uninstall(transaction, files, receipt_snapshot):
+    expected_files = {
+        Path(relative).relative_to(BASE).as_posix(): expected
+        for relative, expected in files.items()
+        if relative != LAUNCHER.as_posix()
+    }
+    actual_files = {}
+    app = transaction / APP.name
+    allowed_dirs = {app, app / "daily_fortune"}
+    for current, directories, names in os.walk(str(app), followlinks=False):
+        for name in directories:
+            path = Path(current) / name
+            if reparse_point(path.lstat()) or path.is_symlink() or path not in allowed_dirs:
+                raise InstallError("暂存程序含未知目录或符号链接：{}".format(path))
+        for name in names:
+            path = Path(current) / name
+            if not regular(path):
+                raise InstallError("暂存程序含非普通文件：{}".format(path))
+            actual_files[path.relative_to(transaction).as_posix()] = digest(path.read_bytes())
+    if actual_files != expected_files:
+        raise InstallError("暂存程序与安装清单不一致。")
+    launcher = transaction / "launcher"
+    if not regular(launcher) or digest(launcher.read_bytes()) != files[LAUNCHER.as_posix()]:
+        raise InstallError("暂存启动器与安装清单不一致。")
+    if not regular(transaction / RECEIPT.name) or (transaction / RECEIPT.name).read_bytes() != receipt_snapshot:
+        raise InstallError("暂存安装清单已发生变化。")
 
 
 def verify_command(command, env=None):
@@ -459,13 +512,22 @@ def update(prefix):
 
 
 def default_prefix():
+    if WINDOWS:
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            app_data = Path(local_app_data)
+            if not app_data.is_absolute():
+                raise InstallError("LOCALAPPDATA 必须是绝对路径。")
+            return app_data / COMMAND
+    try:
+        home = Path.home()
+    except (OSError, RuntimeError) as error:
+        raise InstallError("无法确定用户主目录：{}".format(error)) from error
+    if not home.is_absolute():
+        raise InstallError("用户主目录必须是绝对路径。")
     if not WINDOWS:
-        return Path.home() / ".local"
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    app_data = Path(local_app_data) if local_app_data else Path.home() / "AppData/Local"
-    if not app_data.is_absolute():
-        raise InstallError("LOCALAPPDATA 必须是绝对路径。")
-    return app_data / COMMAND
+        return home / ".local"
+    return home / "AppData/Local" / COMMAND
 
 
 def main():
@@ -488,8 +550,6 @@ def main():
             prefix.mkdir(parents=True, exist_ok=True)
             with installation_lock(prefix):
                 action(prefix)
-        elif action is install:
-            action(prefix)
         else:
             with installation_lock(prefix):
                 action(prefix)

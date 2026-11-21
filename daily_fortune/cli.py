@@ -69,7 +69,7 @@ def main(argv=None):
         identity = load_identity(directory)
         tty = sys.stdout.isatty()
         emoji = tty and os.environ.get("TERM") != "dumb"
-        color = emoji and not args.plain and not os.environ.get("NO_COLOR")
+        color = emoji and not args.plain and "NO_COLOR" not in os.environ
         colors = virtual_terminal(sys.stdout) if color and os.name == "nt" else nullcontext(color)
         # Python 3.9 can return zero columns for an unconfigured PTY.
         width = shutil.get_terminal_size(fallback=(76, 24)).columns or 76

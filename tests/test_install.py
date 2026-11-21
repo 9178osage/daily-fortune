@@ -1,4 +1,5 @@
 """Install/uninstall integration tests; every destination lives in TemporaryDirectory."""
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import re
 import shutil
@@ -8,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -219,6 +221,56 @@ class InstallTests(unittest.TestCase):
             parent.chmod(0o755)
         self.manage("uninstall")
 
+    @unittest.skipIf(os.name == "nt", "POSIX 文件系统锁")
+    def test_installation_lock_serializes_posix_operations(self):
+        holding = threading.Event()
+        release = threading.Event()
+        acquired = threading.Event()
+
+        def first():
+            with manage_install.installation_lock(self.prefix):
+                holding.set()
+                if not release.wait(5):
+                    raise RuntimeError("test lock was not released")
+
+        def second():
+            if not holding.wait(5):
+                raise RuntimeError("first operation did not acquire lock")
+            with manage_install.installation_lock(self.prefix):
+                acquired.set()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first_result = pool.submit(first)
+            self.assertTrue(holding.wait(5))
+            second_result = pool.submit(second)
+            try:
+                self.assertFalse(acquired.wait(0.2))
+            finally:
+                release.set()
+            first_result.result(timeout=5)
+            second_result.result(timeout=5)
+        self.assertTrue(acquired.is_set())
+
+    def test_failed_uninstall_rolls_back_published_moves(self):
+        self.manage("install")
+        rename = manage_install.rename_exclusive
+
+        def fail_launcher_move(source, target):
+            if source == self.launcher:
+                raise OSError("simulated launcher move failure")
+            rename(source, target)
+
+        with patch.object(manage_install, "rename_exclusive", side_effect=fail_launcher_move):
+            with self.assertRaisesRegex(manage_install.InstallError, "已恢复原安装"):
+                manage_install.uninstall(self.prefix)
+
+        self.assertTrue(os.access(self.launcher, os.X_OK))
+        manage_install.check_installation(self.prefix)
+        self.assertIn("今日运势", self.run_installed("--version"))
+        self.assertFalse(any(path.name.startswith(".daily-fortune-uninstall-")
+                             for path in self.base.iterdir()))
+        self.manage("uninstall")
+
     def test_modified_program_refuses_all_removal(self):
         self.manage("install")
         main = self.base / "app/main.py"
@@ -285,6 +337,13 @@ class InstallTests(unittest.TestCase):
         (self.base / "receipt.json").write_text("{", encoding="utf-8")
         self.manage("uninstall", success=False)
         self.assertTrue(self.launcher.exists())
+
+    def test_installer_rejects_invalid_or_relative_home_paths(self):
+        with patch.object(Path, "home", return_value=Path("relative-home")):
+            with self.assertRaisesRegex(manage_install.InstallError, "绝对路径"):
+                manage_install.default_prefix()
+        with self.assertRaisesRegex(manage_install.InstallError, "无法解析安装根目录"):
+            manage_install.prefix_path("~daily-fortune-user-that-does-not-exist/install")
 
     def test_missing_python_has_clear_shell_diagnostic(self):
         env = dict(self.env, PYTHON=str(self.root / "missing-python"))

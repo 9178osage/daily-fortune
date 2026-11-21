@@ -7,6 +7,8 @@ import secrets
 import stat
 import tempfile
 
+from ._state import sync_directory
+
 if os.name == "nt":
     from ._windows import open_state_file
 
@@ -15,25 +17,40 @@ class IdentityError(Exception):
     pass
 
 
+def _absolute_path(value, setting):
+    try:
+        path = Path(value).expanduser()
+    except (OSError, RuntimeError) as exc:
+        raise IdentityError("无法解析%s：%s。" % (setting, exc)) from exc
+    if not path.is_absolute():
+        raise IdentityError("%s 必须是绝对路径。" % setting)
+    return path
+
+
+def _home_directory():
+    try:
+        home = Path.home()
+    except (OSError, RuntimeError) as exc:
+        raise IdentityError("无法确定用户主目录：%s。" % exc) from exc
+    return _absolute_path(home, "用户主目录")
+
+
 def state_directory():
     setting = os.environ.get("DAILY_FORTUNE_HOME")
     if setting:
-        path = Path(setting).expanduser()
-        if not path.is_absolute():
-            raise IdentityError("DAILY_FORTUNE_HOME 必须是绝对路径。")
-        return path
+        return _absolute_path(setting, "DAILY_FORTUNE_HOME")
     if os.name == "nt":
         setting = os.environ.get("LOCALAPPDATA")
-        base = Path(setting) if setting else Path.home() / "AppData" / "Local"
-        if not base.is_absolute():
-            raise IdentityError("LOCALAPPDATA 必须是绝对路径。")
+        base = _absolute_path(setting, "LOCALAPPDATA") if setting else _home_directory() / "AppData" / "Local"
         return base / "daily-fortune" / "state"
-    return Path.home() / ".local/share/daily-fortune/state"
+    return _home_directory() / ".local/share/daily-fortune/state"
 
 
 def load_identity(directory=None):
     """Publish a complete ID atomically; concurrent first runs share the winner."""
     directory = Path(directory) if directory is not None else state_directory()
+    if not directory.is_absolute():
+        raise IdentityError("状态目录必须是绝对路径。")
     target = directory / "user-id"
     try:
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -42,8 +59,10 @@ def load_identity(directory=None):
             os.name == "nt" and info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
         ):
             raise IdentityError("状态目录不能是符号链接，且必须是目录。")
+        directory_changed = False
         if not target.exists() and not target.is_symlink():
             fd, temporary = tempfile.mkstemp(prefix=".identity-", dir=str(directory))
+            directory_changed = True
             try:
                 with os.fdopen(fd, "wb") as stream:
                     stream.write((secrets.token_hex(16) + "\n").encode("ascii"))
@@ -59,6 +78,8 @@ def load_identity(directory=None):
                     pass
             finally:
                 Path(temporary).unlink(missing_ok=True)
+        if directory_changed:
+            sync_directory(directory)
         if os.name == "nt":
             fd = open_state_file(target)
         else:

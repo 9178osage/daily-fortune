@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from daily_fortune import __version__
 
@@ -128,3 +129,18 @@ class WindowsTests(unittest.TestCase):
         self.assertTrue((self.installation / "state" / "user-id").is_file())
         self.assertFalse((self.local_data / "daily-fortune").exists())
         self.manage("uninstall", "-Prefix", self.installation)
+
+    def test_console_mode_restore_failure_is_reported(self):
+        from daily_fortune import _windows
+
+        class Stream:
+            @staticmethod
+            def fileno():
+                return 1
+
+        with patch.object(_windows.msvcrt, "get_osfhandle", return_value=10), \
+                patch.object(_windows, "_get_console_mode", return_value=True), \
+                patch.object(_windows, "_set_console_mode", side_effect=(True, False)):
+            with self.assertRaises(OSError):
+                with _windows.virtual_terminal(Stream()):
+                    pass

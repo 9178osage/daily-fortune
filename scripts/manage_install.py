@@ -109,8 +109,11 @@ def write_new(path, content, mode):
 
 def prefix_path(value):
     # Canonicalize the user-chosen root once; receipt paths stay strictly relative.
+    raw = os.fspath(value)
+    if raw.startswith("~") and raw != "~" and not raw.startswith(("~/", "~\\")):
+        raise InstallError("无法解析安装根目录：不支持指定其他用户的主目录。")
     try:
-        return Path(value).expanduser().resolve()
+        return Path(raw).expanduser().resolve()
     except (OSError, RuntimeError) as error:
         raise InstallError("无法解析安装根目录：{}".format(error)) from error
 

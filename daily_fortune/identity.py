@@ -18,8 +18,11 @@ class IdentityError(Exception):
 
 
 def _absolute_path(value, setting):
+    raw = os.fspath(value)
+    if raw.startswith("~") and raw != "~" and not raw.startswith(("~/", "~\\")):
+        raise IdentityError("无法解析%s：不支持指定其他用户的主目录。" % setting)
     try:
-        path = Path(value).expanduser()
+        path = Path(raw).expanduser()
     except (OSError, RuntimeError) as exc:
         raise IdentityError("无法解析%s：%s。" % (setting, exc)) from exc
     if not path.is_absolute():

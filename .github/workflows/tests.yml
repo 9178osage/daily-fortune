@@ -66,6 +66,8 @@ jobs:
         run: |
           python -m mypy --no-incremental --platform darwin --exclude 'daily_fortune/_windows\.py$'
           python -m mypy --no-incremental --platform win32
+      - name: Compile
+        run: python -B -m compileall -q main.py daily_fortune scripts tests
       - name: Lint Python and Shell
         run: |
           python -m ruff check .
@@ -92,20 +94,12 @@ jobs:
       - name: Package and verify the tagged source
         shell: bash
         run: |
-          version=$(python -B -c 'from daily_fortune import __version__; print(__version__)')
-          if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || $GITHUB_REF_NAME != "v$version" ]]; then
-            printf 'Tag %s does not match package version %s.\n' "$GITHUB_REF_NAME" "$version" >&2
-            exit 1
-          fi
           package="daily-fortune-$GITHUB_REF_NAME"
           output="$RUNNER_TEMP/daily-fortune-release"
           mkdir -p "$output"
-          git archive --format=zip --prefix="$package/" --output="$output/$package.zip" "$GITHUB_SHA"
-          (
-            cd "$output"
-            shasum -a 256 "$package.zip" > SHA256SUMS
-            shasum -a 256 -c SHA256SUMS
-          )
+          python scripts/build_release.py "$GITHUB_REF_NAME" --dist "$output"
+          python scripts/verify_release.py "$output/$package.zip" \
+            --checksum "$output/SHA256SUMS.txt"
           extracted=$(mktemp -d "$RUNNER_TEMP/daily-fortune-smoke.XXXXXXXX")
           ditto -x -k "$output/$package.zip" "$extracted"
           prefix="$extracted/install"
@@ -117,5 +111,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" "daily-fortune-$GITHUB_REF_NAME.zip" SHA256SUMS \
+          gh release create "$GITHUB_REF_NAME" "daily-fortune-$GITHUB_REF_NAME.zip" SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes

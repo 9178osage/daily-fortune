@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Entry point, including isolated (-I) installed launchers."""
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
 if sys.version_info < (3, 9):
     raise SystemExit("今日运势需要 Python 3.9 或更新版本。")

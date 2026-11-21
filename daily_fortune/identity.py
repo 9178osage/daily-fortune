@@ -1,12 +1,12 @@
 """Store a private, anonymous installation identifier without device inspection."""
 
 import os
-from pathlib import Path
 import re
 import secrets
 import stat
 import sys
 import tempfile
+from pathlib import Path
 
 from ._state import sync_directory
 
@@ -92,6 +92,8 @@ def load_identity(directory=None):
         with os.fdopen(fd, "rb") as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                 raise IdentityError("匿名标识必须是普通文件。")
+            if os.name != "nt" and stat.S_IMODE(os.fstat(stream.fileno()).st_mode) & 0o077:
+                raise IdentityError("匿名标识权限过宽，请将其设置为仅当前用户可访问（0600）。")
             value = stream.read(100)
         if not re.fullmatch(rb"[0-9a-f]{32}\n?", value):
             raise IdentityError("匿名标识文件格式异常；请保留原文件并检查，程序不会自动重置它。")

@@ -11,7 +11,6 @@ from zipfile import ZipFile
 
 from daily_fortune import __version__
 
-
 ROOT = Path(__file__).resolve().parents[1]
 PREVIEW_ARGS = ("--date", "2026-11-08", "--plain")
 WINDOWS_FIXTURE = ROOT / "tests/fixtures/daily-fortune-1.6.0-windows.zip"

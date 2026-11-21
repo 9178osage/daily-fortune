@@ -1,7 +1,7 @@
 """Command-line interface; help/version never create state."""
 
 import argparse
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from datetime import date
 import errno
 import os
@@ -18,6 +18,7 @@ from .engine import generate
 from .followup import show_followups
 from .identity import IdentityError, load_identity, state_directory
 from .render import render, render_compact, wrap
+
 
 class Parser(argparse.ArgumentParser):
     def error(self, message):
@@ -101,10 +102,8 @@ def main(argv=None):
     except (OSError, UnicodeError) as exc:
         if _output_pipe_closed(exc):
             # Prevent the interpreter's final stdout flush from emitting a traceback.
-            try:
-                sys.stdout = open(os.devnull, "w", encoding="utf-8")
-            except OSError:
-                pass
+            with suppress(OSError):
+                sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
             return 0
         print("今日运势：无法输出报告：%s" % exc, file=sys.stderr)
         return 1

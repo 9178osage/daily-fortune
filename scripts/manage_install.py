@@ -7,7 +7,7 @@ if sys.version_info < (3, 9):
     sys.exit(1)
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 import ctypes
 import hashlib
 import io
@@ -44,7 +44,8 @@ INSTALL_SCRIPT = ".\\install.ps1" if WINDOWS else "./install.sh"
 REQUIRED = {LAUNCHER.as_posix(), (APP / "main.py").as_posix(), (APP / "daily_fortune/__init__.py").as_posix()}
 PACKAGE_FILE = re.compile(re.escape((APP / "daily_fortune").as_posix()) + r"/[A-Za-z_][A-Za-z_0-9]*\.py\Z")
 REQUIRED_MODULES = (
-    "__init__", "_windows", "cli", "compact", "content", "draw_memory", "engine", "followup", "identity", "render",
+    "__init__", "_state", "_windows", "cli", "compact", "content", "draw_memory", "engine",
+    "followup", "identity", "render",
 )
 
 
@@ -140,7 +141,7 @@ def check_base(prefix):
     safe_parent_chain(prefix, base)
     if base.exists():
         allowed = {"state", "bin", LOCK_NAME, BACKUPS} if WINDOWS else {"state"}
-        unknown = set(p.name for p in base.iterdir()) - allowed
+        unknown = {p.name for p in base.iterdir()} - allowed
         if unknown:
             raise InstallError("安装目录已有文件，拒绝覆盖：{}（{}）".format(base, "、".join(sorted(unknown))))
     state = prefix / STATE
@@ -254,10 +255,8 @@ def install(prefix):
             if regular(path) and digest(path.read_bytes()) == expected:
                 path.unlink()
         for path in reversed(made_dirs):
-            try:
+            with suppress(OSError):
                 path.rmdir()
-            except OSError:
-                pass
         raise
     print("安装完成：{}".format(prefix / LAUNCHER))
     if WINDOWS:
@@ -655,7 +654,7 @@ def main():
     parser = argparse.ArgumentParser(description="今日运势的离线用户目录安装器")
     actions = {"install": ("安装", install), "uninstall": ("卸载", uninstall), "update": ("更新", update)}
     parser.add_argument("action", choices=actions)
-    location = r"%LOCALAPPDATA%\daily-fortune" if WINDOWS else "~/.local"
+    location = r"%%LOCALAPPDATA%%\daily-fortune" if WINDOWS else "~/.local"
     parser.add_argument("--prefix", help="安装根目录（默认 {}）".format(location))
     args = parser.parse_args()
     label, action = actions[args.action]
@@ -669,13 +668,10 @@ def main():
             if not (pending and regular(prefix / LOCK_NAME)):
                 check_install_target(prefix)
             prefix.mkdir(parents=True, exist_ok=True)
-            with installation_lock(prefix):
-                action(prefix)
-        else:
-            with installation_lock(prefix):
-                if recover_change(prefix):
-                    print("已恢复上次未完成的安装变更。")
-                action(prefix)
+        with installation_lock(prefix):
+            if recover_change(prefix):
+                print("已恢复上次未完成的安装变更。")
+            action(prefix)
     except (OSError, InstallError) as error:
         print("{}失败：{}".format(label, error), file=sys.stderr)
         return 1

@@ -18,7 +18,7 @@
 
 ## 快速开始
 
-需要 Python 3.9 或更高版本。在 [GitHub Releases](https://github.com/9178osage/daily-fortune/releases) 选择版本，下载该版本的 `daily-fortune-vX.Y.Z.zip` 和 `SHA256SUMS`，校验后解压。macOS 可在下载目录执行 `shasum -a 256 -c SHA256SUMS`。Windows 可用 `Get-FileHash -Algorithm SHA256` 计算 ZIP 的哈希，再与 `SHA256SUMS` 对照。
+需要 Python 3.9 或更高版本。在 [GitHub Releases](https://github.com/9178osage/daily-fortune/releases) 选择版本，下载该版本的 `daily-fortune-vX.Y.Z.zip` 和 `SHA256SUMS.txt`，校验后解压。macOS 可在下载目录执行 `shasum -a 256 -c SHA256SUMS.txt`。Windows 可用 `Get-FileHash -Algorithm SHA256` 计算 ZIP 的哈希，再与 `SHA256SUMS.txt` 对照。
 
 如果 GitHub 自动生成的源码 ZIP 下载中断，请重新下载完整文件再校验。也可以用 Git 获取当前源码。进入解压或克隆得到的目录后，执行对应平台的安装命令。
 
@@ -68,6 +68,31 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 如果希望新终端也能找到命令，将上面的 `export` 行加入 `~/.zshrc`。程序副本安装在 `~/.local/share/daily-fortune/app/`，可独立于源码目录运行。
+
+## 下载与校验
+
+优先从 [GitHub Releases](https://github.com/9178osage/daily-fortune/releases/latest) 下载带版本号的源码 ZIP，不要只下载未固定版本的分支快照。发布页同时提供 `SHA256SUMS.txt`。
+
+macOS 或 Linux 下载后，用校验和文件核对：
+
+```sh
+shasum -a 256 -c SHA256SUMS.txt
+```
+
+Windows PowerShell 可用：
+
+```powershell
+Get-FileHash .\daily-fortune-版本号.zip -Algorithm SHA256
+```
+
+若下载中断，需要从维护脚本继续下载并校验：
+
+```sh
+python3 scripts/download_release.py "发布包 URL" "daily-fortune-版本号.zip" \
+  --sha256 "校验和文件中的 64 位 SHA-256"
+```
+
+脚本会保留 `.part` 临时文件，下次运行相同 URL 和目标文件时继续传输；校验失败不会替换已存在的目标文件。源码 ZIP 解压后仍可按上面的 Windows 或 macOS 安装说明操作。
 
 ## 怎么玩
 
@@ -207,3 +232,13 @@ shellcheck --norc -s sh install.sh update.sh uninstall.sh 今日运势
 ### 发布
 
 推送与 `daily_fortune/__init__.py` 版本号一致的 `vX.Y.Z` 标签会启动发布流程。Windows 和 macOS 测试及静态检查通过后，工作流打包该标签的源码，生成 SHA-256 校验文件，从 ZIP 试装，再将两份文件上传到 GitHub Releases。
+
+在已有对应 Git 标签的源码仓库中，也可以用同一套脚本在本地构建并复核：
+
+```sh
+python3 scripts/build_release.py vX.Y.Z
+python3 scripts/verify_release.py dist/daily-fortune-vX.Y.Z.zip \
+  --checksum dist/SHA256SUMS.txt
+```
+
+构建脚本只读取指定标签的 Git tree；未提交或未暂存的工作区改动不会进入发布包。

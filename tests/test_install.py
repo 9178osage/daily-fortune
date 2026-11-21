@@ -1,6 +1,6 @@
 """Install/uninstall integration tests; every destination lives in TemporaryDirectory."""
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stdout
 import hashlib
 import io
 import json
@@ -18,7 +18,6 @@ from unittest.mock import patch
 from zipfile import ZipFile
 
 from scripts import manage_install
-
 
 ROOT = Path(__file__).resolve().parents[1]
 MANAGER = ROOT / "scripts/manage_install.py"
@@ -167,9 +166,9 @@ raise SystemExit(manage_install.main())
             rename(source, target)
 
         with patch.object(manage_install, "application_payloads", return_value=payloads), \
-                patch.object(manage_install, "rename_exclusive", side_effect=fail_publishing_receipt):
-            with self.assertRaisesRegex(manage_install.InstallError, "已恢复原版本"):
-                manage_install.update(self.prefix)
+                patch.object(manage_install, "rename_exclusive", side_effect=fail_publishing_receipt), \
+                self.assertRaisesRegex(manage_install.InstallError, "已恢复原版本"):
+            manage_install.update(self.prefix)
         self.assertEqual((self.base / "receipt.json").read_bytes(), old_receipt)
         self.assertIn("今日运势", self.run_installed("--version"))
         self.assertEqual(list(self.base.parent.glob("daily-fortune-backup-*")), [])
@@ -399,6 +398,19 @@ raise SystemExit(manage_install.main())
         self.assertFalse(any(path.name == manage_install.TRANSACTION
                              for path in self.base.iterdir()))
         self.manage("uninstall")
+
+    def test_windows_install_entrypoint_recovers_pending_change(self):
+        with patch.object(manage_install, "WINDOWS", True), \
+                patch.object(manage_install, "check_install_target"), \
+                patch.object(manage_install, "installation_lock", return_value=nullcontext()), \
+                patch.object(manage_install, "recover_change", return_value=True) as recover, \
+                patch.object(manage_install, "install") as action, \
+                patch.object(sys, "argv", ["manage_install.py", "install", "--prefix", str(self.prefix)]), \
+                redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(manage_install.main(), 0)
+        recover.assert_called_once_with(self.prefix.resolve())
+        action.assert_called_once_with(self.prefix.resolve())
+        self.assertIn("已恢复上次未完成", output.getvalue())
 
     def test_modified_program_refuses_all_removal(self):
         self.manage("install")

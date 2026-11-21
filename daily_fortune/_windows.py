@@ -1,15 +1,14 @@
 """Windows file and console operations for the command-line runtime."""
 # mypy: disable-error-code=attr-defined
 
-from contextlib import contextmanager
 import ctypes
-from ctypes import wintypes
 import msvcrt
 import os
 import stat
+from contextlib import contextmanager
+from ctypes import wintypes
 
-
-_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_kernel32 = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
 _create_file = _kernel32.CreateFileW
 _create_file.argtypes = (
     wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
@@ -52,17 +51,19 @@ def open_state_file(path, *, writable=False):
     handle = _create_file(str(path), access, sharing, None,
                           disposition, _FILE_FLAG_OPEN_REPARSE_POINT, None)
     if handle == _INVALID_HANDLE:
-        raise ctypes.WinError(ctypes.get_last_error())
+        raise getattr(ctypes, "WinError")(getattr(ctypes, "get_last_error")())
     try:
-        flags = os.O_BINARY | os.O_NOINHERIT | (os.O_RDWR if writable else os.O_RDONLY)
-        fd = msvcrt.open_osfhandle(handle, flags)
+        flags = getattr(os, "O_BINARY") | getattr(os, "O_NOINHERIT") | (
+            os.O_RDWR if writable else os.O_RDONLY)
+        fd = getattr(msvcrt, "open_osfhandle")(handle, flags)
     except BaseException:
         _close_handle(handle)
         raise
     try:
         info = os.fstat(fd)
         if (not stat.S_ISREG(info.st_mode) or
-                info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                getattr(info, "st_file_attributes", 0) & getattr(
+                    stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)):
             raise OSError("状态文件必须是普通文件，且不能是重解析点。")
     except BaseException:
         os.close(fd)
@@ -90,7 +91,7 @@ def sync_directory(path):
 def virtual_terminal(stream):
     """Enable ANSI output for this draw when the console supports it."""
     try:
-        handle = msvcrt.get_osfhandle(stream.fileno())
+        handle = getattr(msvcrt, "get_osfhandle")(stream.fileno())
     except OSError:
         yield False
         return

@@ -1,5 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor
-from datetime import date
 import errno
 import os
 from pathlib import Path
@@ -8,6 +6,8 @@ import sys
 import tempfile
 from typing import Optional, TYPE_CHECKING
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from unittest.mock import patch
 
 if sys.platform != "win32":
@@ -29,6 +29,7 @@ from daily_fortune.render import clusters, display_width, render, wrap
 
 ROOT = Path(__file__).resolve().parents[1]
 USER = "0123456789abcdef0123456789abcdef"
+DAY = date(2026, 11, 8)
 
 
 class CliTests(unittest.TestCase):
@@ -293,6 +294,7 @@ class CliTests(unittest.TestCase):
     def test_zero_terminal_columns_use_readable_fallback(self):
         import contextlib
         import io
+
         from daily_fortune.cli import main
 
         with patch.dict(os.environ, self.env), \
@@ -302,9 +304,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(output.getvalue().splitlines()), 7)
 
     def test_offline_execution_with_network_functions_blocked(self):
-        from daily_fortune.cli import main
         import contextlib
         import io
+
+        from daily_fortune.cli import main
         with patch.dict(os.environ, self.env), patch("socket.socket", side_effect=AssertionError("network forbidden")), \
                 patch("socket.create_connection", side_effect=AssertionError("network forbidden")), \
                 contextlib.redirect_stdout(io.StringIO()) as output:
@@ -409,9 +412,8 @@ class CliTests(unittest.TestCase):
 
         day = date(2026, 11, 8)
         (self.state / f"drawn-{day.isoformat()}").symlink_to(target)
-        with self.assertRaises(DrawMemoryError):
-            with daily_draw(self.state, day):
-                self.fail("state symlink was opened")
+        with self.assertRaises(DrawMemoryError), daily_draw(self.state, day):
+            self.fail("state symlink was opened")
         self.assertEqual(target.read_bytes(), (USER + "\n").encode("ascii"))
 
 

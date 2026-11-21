@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import secrets
 import stat
+import sys
 import tempfile
 
 from ._state import sync_directory
@@ -59,7 +60,7 @@ def load_identity(directory=None):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         info = directory.lstat()
         if not stat.S_ISDIR(info.st_mode) or (
-            os.name == "nt" and info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            sys.platform == "win32" and info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
         ):
             raise IdentityError("状态目录不能是符号链接，且必须是目录。")
         directory_changed = False
@@ -73,7 +74,7 @@ def load_identity(directory=None):
                     os.fsync(stream.fileno())
                 try:
                     # Windows rename fails if a concurrent first run already published its ID.
-                    if os.name == "nt":
+                    if sys.platform == "win32":
                         os.rename(temporary, target)
                     else:
                         os.link(temporary, target)
@@ -86,7 +87,8 @@ def load_identity(directory=None):
         if os.name == "nt":
             fd = open_state_file(target)
         else:
-            fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            fd = os.open(target, flags)
         with os.fdopen(fd, "rb") as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                 raise IdentityError("匿名标识必须是普通文件。")

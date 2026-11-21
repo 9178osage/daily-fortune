@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 import os
 import stat
+import sys
 
 from ._state import sync_directory
 
@@ -24,7 +25,7 @@ class DrawMemoryError(Exception):
 def _lock_marker(marker):
     fd = marker.fileno()
     try:
-        if os.name == "nt":
+        if sys.platform == "win32":
             # Windows locks a range from the current position, even for an empty file.
             while True:
                 try:
@@ -41,7 +42,7 @@ def _lock_marker(marker):
     try:
         yield
     finally:
-        if os.name == "nt":
+        if sys.platform == "win32":
             try:
                 marker.seek(0)
                 msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
@@ -54,7 +55,7 @@ def daily_draw(directory, day):
     """Hold the date lock through output and mark it only after a successful flush."""
     path = directory / f"drawn-{day.isoformat()}"
     try:
-        if os.name == "nt":
+        if sys.platform == "win32":
             fd = open_state_file(path, writable=True)
         else:
             fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)

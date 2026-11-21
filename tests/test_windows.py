@@ -2,19 +2,19 @@
 
 import os
 from pathlib import Path
-import re
-import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from zipfile import ZipFile
 
 from daily_fortune import __version__
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PREVIEW_ARGS = ("--date", "2026-11-08", "--plain")
+WINDOWS_FIXTURE = ROOT / "tests/fixtures/daily-fortune-1.6.0-windows.zip"
 
 
 @unittest.skipUnless(sys.platform == "win32", "requires Windows PowerShell and cmd")
@@ -33,7 +33,7 @@ class WindowsTests(unittest.TestCase):
         self.env.pop("DAILY_FORTUNE_HOME", None)
         self.installation = self.local_data / "daily-fortune"
 
-    def manage(self, action, *args, source_directory=ROOT):
+    def manage(self, action, *args, source_directory=ROOT, expected_exit=0):
         process = subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
              "-File", str(source_directory / f"{action}.ps1"), *map(str, args)],
@@ -45,7 +45,7 @@ class WindowsTests(unittest.TestCase):
             errors="replace",
             timeout=60,
         )
-        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        self.assertEqual(process.returncode, expected_exit, process.stdout + process.stderr)
 
     def run_launcher(self, *args, source=False, expected_exit=0):
         if source:
@@ -74,18 +74,8 @@ class WindowsTests(unittest.TestCase):
 
     def previous_release(self):
         fixture = self.external_directory / "旧版 源码"
-        fixture.mkdir()
-        for file in ("install.ps1", "update.ps1", "uninstall.ps1", "main.py"):
-            shutil.copy2(ROOT / file, fixture / file)
-        for directory in ("daily_fortune", "scripts"):
-            shutil.copytree(ROOT / directory, fixture / directory, ignore=shutil.ignore_patterns("__pycache__"))
-        version_file = fixture / "daily_fortune" / "__init__.py"
-        old_contents, replacements = re.subn(
-            r'^__version__ = "[^"]+"$', '__version__ = "0.0.0"',
-            version_file.read_text(encoding="utf-8"), flags=re.MULTILINE,
-        )
-        self.assertEqual(replacements, 1)
-        version_file.write_text(old_contents, encoding="utf-8")
+        with ZipFile(WINDOWS_FIXTURE) as archive:
+            archive.extractall(fixture)
         return fixture
 
     def test_default_install_update_and_reinstall(self):
@@ -99,7 +89,7 @@ class WindowsTests(unittest.TestCase):
         self.manage("install", source_directory=self.previous_release())
         launcher = self.installation / "bin" / "daily-fortune.cmd"
         self.assertTrue(launcher.is_file())
-        self.assertIn("0.0.0", self.run_launcher("--version"))
+        self.assertEqual("今日运势 1.6.0", self.run_launcher("--version").strip())
         self.assertIn("参数错误", self.run_launcher("--date", "2026-02-30", expected_exit=2))
         self.assertEqual(self.run_launcher(*PREVIEW_ARGS), source_preview)
         detailed = self.run_launcher("--full", *PREVIEW_ARGS)

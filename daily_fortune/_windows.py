@@ -1,4 +1,5 @@
 """Windows file and console operations for the command-line runtime."""
+# mypy: disable-error-code=attr-defined
 
 from contextlib import contextmanager
 import ctypes

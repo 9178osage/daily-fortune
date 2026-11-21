@@ -1,6 +1,7 @@
 """Small optional activities after a fortune in an interactive terminal."""
 
 import secrets
+import unicodedata
 
 from .engine import generate, rotation
 from .render import render, wrap
@@ -23,7 +24,10 @@ TASKS = (
 
 def _read_option(prompt, width):
     text = input("\n".join(wrap(prompt, width)))
-    return "".join(char for char in text if char.isprintable()).strip()
+    return "".join(
+        char for char in text
+        if char.isprintable() or unicodedata.category(char) == "Zs" or char in "\u200c\u200d"
+    ).strip()
 
 
 def show_followups(day, identity, width, *, color=False, emoji=False):

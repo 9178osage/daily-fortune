@@ -1,5 +1,21 @@
 """今日运势的原创娱乐文案；主题意象与分数均不代表现实预测。"""
 
+from typing import TypedDict
+
+
+class Theme(TypedDict):
+    name: str
+    keywords: tuple[str, ...]
+    colors: tuple[str, ...]
+    objects: tuple[str, ...]
+    images: tuple[tuple[str, str], ...]
+
+
+class GradeText(TypedDict):
+    meaning: str
+    messages: tuple[str, ...]
+
+
 DOMAINS = ("study", "career", "wealth", "social", "love", "vitality")
 
 LABELS = {
@@ -167,7 +183,7 @@ DOMAIN_TEXT = {
     },
 }
 
-THEMES = {
+THEMES: dict[str, Theme] = {
     "study": {
         "name": "灯下寻页",
         "keywords": ("好奇", "求证", "拆解", "复习", "提问", "慢读", "联结", "留白"),
@@ -344,7 +360,7 @@ CAUTIONS = {
                  ("拿步数攀比", "自己的节奏不必借用排行榜"), ("休息还刷屏", "偶尔给视线另一种风景")),
 }
 
-GRADE_INFO = {
+GRADE_INFO: dict[str, GradeText] = {
     "大吉": {
         "meaning": "卦势舒展：宜把充足余量用在一件边界清楚的小事上。",
         "messages": ("诸元较顺，可先完成最清楚的一项，再观察反馈。",
